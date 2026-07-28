@@ -1,13 +1,20 @@
-STEP 1 - clean ("Initial Data Cleaning")
-Type: auto (runs automatically, no operator input)
-Source: backend/app/pipeline/auto_stages.py :: stage_clean_linebreaks
+STEP 1 -- clean ("Initial Data Cleaning")
+================================================================================
+TYPE      auto (runs automatically, no operator input)
+CODE      backend/app/pipeline/stages/clean.py :: stage_clean_linebreaks
 
-RULES
-1. Applies to every column in the dataset (no column is excluded).
-2. For each text column, strip embedded line-break characters:
-   - "\n" is replaced with a single space.
-   - "\r" is replaced with a single space.
-3. No values are validated, flagged, or rejected at this step; it only
-   normalizes formatting so later steps don't choke on multi-line fields.
-4. Runs unconditionally on every job, immediately after the raw file is
-   accepted, before any other step.
+WHAT IT DOES
+Normalizes formatting so later steps don't choke on multi-line fields.
+Validates nothing and flags nothing.
+
+CONSTRAINTS
+  1. Applies to every column in the dataset -- no column is excluded.
+  2. Within each text value: "\n" -> single space, "\r" -> single space.
+  3. Runs unconditionally, on every job, immediately after the raw file is
+     accepted, before any other step.
+
+EDITABLE FIELDS
+None -- fully automatic.
+
+ADVANCE RULE
+Always advances immediately; there is nothing to wait on.

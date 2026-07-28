@@ -16,10 +16,10 @@ to hit a specific rule:
 | 9000008 | Blank DoB → `id_dob_validate` |
 | 9000009 | DoB under 18 → `id_dob_validate` |
 | 9000010 | Default bad date (1900) → `id_dob_validate` |
-| 9000011 | Invalid address, Baghdad province (no longer auto-repaired — the `address_fix` stage was removed) |
-| 9000012 | City `00000` + invalid address (no longer auto-repaired) |
-| 9000013 | Province "Outside the country" + invalid address (no longer auto-repaired) |
-| 9000014 | City `00000` + valid address (no longer auto-repaired) |
+| 9000011 | Address is `0` (placeholder), city is real (`Some City`) → `address_fix` replaces ACCOUNT_ADDRESS from the Baghdad pool (its province, `Baghdad`, is mapped), city/province untouched |
+| 9000012 | Address is `JUNE` (denylist match — has letters, so the "no letters" rule alone wouldn't catch it), city is the `00000` placeholder → `address_fix` sets city/province to Baghdad and replaces ACCOUNT_ADDRESS from the pool |
+| 9000013 | Address is `-` (no letters), province is `Outside the country` → `address_fix` sets city/province to Baghdad and replaces ACCOUNT_ADDRESS from the general pool (outside-country rows can't be province-mapped) |
+| 9000014 | Address is a real-looking street value, city is the `00000` placeholder → `address_fix` sets city/province to Baghdad but leaves the (already-valid) address alone |
 | 9000015 | Blank phone → `mobile_fill` |
 | 9000016 | All-zero phone → `mobile_fill` |
 | 9000017 | Overwritten by `dummy_replace_reference.xlsx` (name/address/ID all replaced) |

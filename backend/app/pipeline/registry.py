@@ -1,18 +1,28 @@
-from .auto_stages import (
-    default_id_invalid_mask,
-    stage_clean_linebreaks,
-    stage_default_id_assign,
-    stage_reset_cms_fields,
-)
-from .constants import CMS_UPDATE_COLS, REPLACE_MAPPING_COLS
-from .reasons import (
-    validation_reasons_id_dob,
-    validation_reasons_id_only,
-    validation_reasons_mobile,
-    validation_reasons_name,
-)
-from .upload_stages import stage_cms_integration, stage_replace_reference
-from .validators import mask_id_dob_invalid, mask_id_only_invalid, mask_mobile_missing, mask_name_invalid
+"""The wiring list: which file handles each of the 12 pipeline stages, in
+order, plus the small cross-stage aggregates (RAW_REQUIRED_COLS, upload
+dispatch) that need to know about more than one stage at once. Edit a single
+stage's own behavior in its file under stages/ -- this file should only
+change when a stage is added, removed, or reordered."""
+from .stages.address_fix import stage_address_fix
+from .stages.clean import stage_clean_linebreaks
+from .stages.cms_integration import CMS_SHEET_COLS, CMS_UPDATE_COLS, stage_cms_integration, validate_cms_reference_inputs
+from .stages.default_id import default_id_invalid_mask, stage_default_id_assign
+from .stages.final_id_check import mask_id_only_invalid, validation_reasons_id_only
+from .stages.id_dob_validate import mask_id_dob_invalid, validation_reasons_id_dob
+from .stages.mobile_fill import mask_mobile_missing, validation_reasons_mobile
+from .stages.name_validate import mask_name_invalid, validation_reasons_name
+from .stages.replace import REPLACE_MAPPING_COLS, stage_replace_reference, validate_replace_reference_inputs
+from .stages.reset_cms import stage_reset_cms_fields
+
+RAW_REQUIRED_COLS = list(dict.fromkeys(["ACCOUNT_NUMBER", *REPLACE_MAPPING_COLS, *CMS_UPDATE_COLS]))
+
+
+def validate_upload_inputs(stage_id: str, df, ref_df):
+    if stage_id == "replace":
+        validate_replace_reference_inputs(df, ref_df)
+    elif stage_id == "cms_integration":
+        validate_cms_reference_inputs(ref_df)
+
 
 STAGES = [
     {"id": "clean", "title": "Initial Data Cleaning", "type": "auto"},
@@ -29,6 +39,7 @@ STAGES = [
     {"id": "reset_cms", "title": "Reset CMS Fields", "type": "auto"},
     {"id": "name_validate", "title": "Name Validation", "type": "manual_edit"},
     {"id": "id_dob_validate", "title": "ID & DoB Validation", "type": "manual_edit"},
+    {"id": "address_fix", "title": "Address Auto-Fix", "type": "auto"},
     {"id": "mobile_fill", "title": "Missing Mobile Numbers", "type": "manual_edit"},
     {"id": "cms_integration", "title": "CMS Data Integration", "type": "upload",
      "skippable": True, "api_invoke_planned": True,
@@ -50,6 +61,7 @@ STAGES = [
 AUTO_HANDLERS = {
     "clean": stage_clean_linebreaks,
     "reset_cms": stage_reset_cms_fields,
+    "address_fix": stage_address_fix,
 }
 
 UPLOAD_HANDLERS = {

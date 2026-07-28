@@ -5,3 +5,4 @@ __pycache__/
 *.csv
 graphify-out/
 .claude/
+aman/

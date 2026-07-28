@@ -1,16 +1,20 @@
-STEP 7 - mobile_fill ("Missing Mobile Numbers")
-Type: manual_edit (pages 200 flagged rows at a time)
-Source: backend/app/pipeline/validators.py :: mask_mobile_missing
-         backend/app/pipeline/reasons.py :: validation_reasons_mobile
+STEP 7 -- mobile_fill ("Missing Mobile Numbers")
+================================================================================
+TYPE      manual_edit (pages 200 flagged rows at a time)
+CODE      backend/app/pipeline/stages/mobile_fill.py :: mask_mobile_missing,
+          validation_reasons_mobile
 
-FLAGGING RULE
-A row is flagged if PHONE_NUMBER equals the sentinel value
-XXX_NOT_COLLECTED_XXX, or is blank/empty. (Step 6 sets this sentinel for
-any phone number that was blank or all-zeros, so in practice this step
-catches whatever step 6 could not fill in.)
+WHAT IT DOES
+Flags accounts with no usable phone number for manual entry. No earlier
+step blanks or sentinels bad numbers -- all three conditions below are
+checked directly by this step's own validator.
 
-REASON MESSAGE
-"Phone number is missing."
+CONSTRAINTS (a row is flagged if ANY of these is true)
+  1. PHONE_NUMBER equals the sentinel value XXX_NOT_COLLECTED_XXX.
+  2. PHONE_NUMBER is blank/empty.
+  3. PHONE_NUMBER is all zeros (fullmatch regex ^0+$).
+All three -> the same reason: "Phone number is missing or not a valid
+number."
 
 EDITABLE FIELDS
 PHONE_NUMBER.

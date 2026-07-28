@@ -1,23 +1,25 @@
-STEP 9 - final_id_check ("Final ID Validation")
-Type: manual_edit (pages 200 flagged rows at a time)
-Source: backend/app/pipeline/validators.py :: compute_id_validity,
-         mask_id_only_invalid
-         backend/app/pipeline/reasons.py :: validation_reasons_id_only,
-         _id_reason_checks
+STEP 9 -- final_id_check ("Final ID Validation")
+================================================================================
+TYPE      manual_edit (pages 200 flagged rows at a time)
+CODE      backend/app/pipeline/stages/final_id_check.py :: mask_id_only_invalid,
+          validation_reasons_id_only
+          backend/app/pipeline/toolbox.py :: compute_id_validity, id_reason_checks
+          (shared with id_dob_validate/default_id)
 
-FLAGGING RULE
-Identical ID_TYPE / ID_NUMBER logic as step 5 (id_dob_validate) -- see that
-step's constrain.txt for the full breakdown. Summary:
-  - ID_TYPE must be Passport / National Id (or "nid"/"nationalid") /
-    Civil Id (or "civilid"/"civil_id"); "doc" and anything else are invalid.
-  - Passport ID_NUMBER: regex [A-Za-z][A-Za-z0-9]{7,8} (8-9 chars, starts
-    with a letter).
-  - National Id ID_NUMBER: regex \d{12} (exactly 12 digits).
-  - Civil Id ID_NUMBER: just needs to be present/non-placeholder.
-IMPORTANT DIFFERENCE FROM STEP 5: Date of birth is NOT checked here at all
--- this step only re-examines ID_TYPE and ID_NUMBER, giving the operator one
-last pass at IDs that were force-advanced past earlier, or that CMS/replace
-data introduced/changed since step 5.
+WHAT IT DOES
+One last pass at IDs, for rows that were force-advanced past step 5, or
+whose ID fields were changed since then by the step-2 override or the
+step-8 CMS merge. DOB is NOT re-checked here -- that's step 5 only.
+
+CONSTRAINTS -- identical ID_TYPE / ID_NUMBER logic as step 5
+(id_dob_validate), see that file for the full breakdown. Summary:
+  1. ID_TYPE must be Passport / National Id ("nid"/"nationalid" also
+     accepted) / Civil Id ("civilid"/"civil_id" also accepted); "doc" and
+     anything else is invalid.
+  2. Passport ID_NUMBER must fullmatch [A-Za-z][A-Za-z0-9]{7,8} (8-9
+     characters, starts with a letter).
+  3. National Id ID_NUMBER must fullmatch \d{12} (exactly 12 digits).
+  4. Civil Id ID_NUMBER just needs to be present/non-placeholder.
 
 EDITABLE FIELDS
 ID_TYPE, ID_NUMBER.

@@ -18,7 +18,7 @@ from ..helpers import (
     _require_job,
     _upload_metrics,
     _validate_edit_items,
-    _write_stage_sheets_xlsx,
+    _write_review_sheets_xlsx,
 )
 from ..schemas import DraftRequest, EditItem, SubmitRequest
 
@@ -277,7 +277,7 @@ def download_email_snapshot(job_id: str):
 
     df = store.get_df(job_id)
     out_path = store.JOBS_DIR / job_id / "email_snapshot.xlsx"
-    _write_stage_sheets_xlsx(df, out_path, include_validation_notes=True)
+    _write_review_sheets_xlsx(df, out_path)
     return FileResponse(out_path, filename=f"{job_id}.xlsx")
 
 

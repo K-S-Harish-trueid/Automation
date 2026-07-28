@@ -1,23 +1,29 @@
-STEP 2 - replace ("Data Consistency Update" / historical override)
-Type: upload (skippable)
-Source: backend/app/pipeline/upload_stages.py :: stage_replace_reference,
-         validate_replace_reference_inputs
-         backend/app/pipeline/constants.py :: REPLACE_MAPPING_COLS
+STEP 2 -- replace ("Data Consistency Update" / historical override)
+================================================================================
+TYPE      upload (skippable)
+CODE      backend/app/pipeline/stages/replace.py :: stage_replace_reference,
+          validate_replace_reference_inputs, REPLACE_MAPPING_COLS
 
-INPUT VALIDATION (upload is rejected if any of these fail)
-1. A reference file must be supplied.
-2. Both the base dataset and the reference file must contain ACCOUNT_NUMBER.
-3. Both the base dataset and the reference file must contain every column in
-   REPLACE_MAPPING_COLS (see below). Missing columns on either side reject
-   the upload with an explicit list of what's missing.
+WHAT IT DOES
+Lets an operator upload a historical reference file whose values overwrite
+the current dataset for any account it matches on ACCOUNT_NUMBER.
 
-MATCHING RULES
-1. Matching key: ACCOUNT_NUMBER, compared as a whitespace-trimmed string on
-   both sides (not numeric comparison).
-2. If ACCOUNT_NUMBER repeats within the reference file, rows are sorted by
-   ACCOUNT_NUMBER and only the LAST occurrence for each duplicate is kept.
-3. Accounts present in the base dataset but absent from the reference file
-   are left completely unchanged (their current values stand).
+CONSTRAINTS -- upload is REJECTED if any of these fail
+  1. A reference file must be supplied.
+  2. Both the base dataset and the reference file must contain
+     ACCOUNT_NUMBER.
+  3. Both sides must contain every column in REPLACE_MAPPING_COLS (see
+     below) -- missing columns on either side reject the upload with an
+     explicit list of what's missing.
+
+MATCHING RULES (once validation above passes)
+  1. Match key: ACCOUNT_NUMBER, compared as a whitespace-trimmed string on
+     both sides -- not a numeric comparison.
+  2. If ACCOUNT_NUMBER repeats within the reference file, rows are sorted
+     by ACCOUNT_NUMBER and only the LAST occurrence of each duplicate is
+     kept.
+  3. Accounts present in the base dataset but absent from the reference
+     file are left completely unchanged.
 
 FIELDS OVERWRITTEN FOR MATCHED ACCOUNTS (REPLACE_MAPPING_COLS)
 ACCOUNT_LAST_NAME, ACCOUNT_FIRST_NAME, ACCOUNT_MIDDLE_NAME, DATE_OPENED,
@@ -26,11 +32,10 @@ ADDRESS_PROVINCE, ADDRESS_COUNTRY, POSTAL_CODE, PHONE_NUMBER, EMAIL_ADDRESS,
 ID_TYPE, ID_NUMBER, ID_COUNTRY, NATIONALITY, ISSUING_FI, CARD_PROGRAM,
 CARD_STATUS, SECONDARY_CARD_TYPE.
 
-FIELD EXPLICITLY NEVER TOUCHED
-CARD_NUMBER is never overwritten by this step, even for matched accounts.
+FIELD EXPLICITLY NEVER TOUCHED HERE
+CARD_NUMBER -- never overwritten by this step, even for matched accounts.
 
 SKIP RULE
-This step is marked skippable: an operator may advance past it via
-POST /jobs/{id}/skip without uploading any file. Skipping performs no merge
-at all -- every account keeps its current values, identical to an account
-that simply had no match in a reference file.
+Skippable: POST /jobs/{id}/skip advances without uploading anything.
+Skipping performs no merge at all -- every account keeps its current
+values, identical to an account that simply had no match.

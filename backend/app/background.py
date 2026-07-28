@@ -36,6 +36,7 @@ def _advance_with_progress(job_id: str):
             auto_labels = {
                 "clean": ("System corrected", "Line breaks were removed during initial cleaning."),
                 "reset_cms": ("System reset", "CMS fields were cleared before CMS integration."),
+                "address_fix": ("System corrected", "Invalid address auto-filled from the province/Baghdad pool."),
             }
             label, reason = auto_labels.get(stage["id"], ("System corrected", "Automated pipeline update."))
             _append_audit_events(

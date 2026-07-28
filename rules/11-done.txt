@@ -1,17 +1,29 @@
-STEP 11 - done ("Final Output")
-Type: done (terminal state, nothing left to run)
-Source: backend/app/routes/jobs.py :: download_final, download_audit
+STEP 11 -- done ("Final Output")
+================================================================================
+TYPE      done (terminal state, nothing left to run)
+CODE      backend/app/routes/jobs.py :: download_final, download_audit
+          backend/app/helpers.py :: _write_flat_xlsx
 
-RULES
-1. No further transformation of the data happens at this step -- the
-   DataFrame is exactly what step 10 (default_id) produced.
-2. The final dataset is downloadable as an .xlsx file named "jod.xlsx"
-   (GET /jobs/{id}/download); every column present in the working DataFrame
-   is written out, in its current column order.
-3. A separate audit trail of every field-level change made across every
-   prior step (source file, operator, reason, old/new value, timestamp) can
-   be downloaded independently as an .xlsx via GET /jobs/{id}/audit/download.
-4. Per job retention rules, once a job reaches "done" it counts against the
-   configured cap of most-recently-completed jobs kept on disk -- older
-   completed jobs beyond that cap (and their downloadable files) are deleted
-   automatically. Jobs still waiting on a manual gate are never pruned.
+WHAT IT DOES
+Nothing further happens to the data here -- it's exactly what step 10
+(default_id) produced. This step just exposes the two downloads.
+
+CONSTRAINTS
+  1. No transformation, validation, or flagging happens at this step.
+  2. FINAL DOWNLOAD -- GET /jobs/{id}/download returns
+     "{job_id}_final.xlsx": one flat sheet named "Final Output", every
+     column in the working DataFrame, same shape as the original raw
+     import (no splitting by topic -- there's nothing left to review by
+     this point).
+  3. AUDIT DOWNLOAD -- GET /jobs/{id}/audit/download returns
+     "{job_id}_audit.xlsx": every field-level change made across every
+     prior step (source file, operator, reason, old/new value, timestamp),
+     independent of the final dataset.
+  4. RETENTION -- once a job reaches "done" it counts against the
+     configured cap of most-recently-completed jobs kept on disk; older
+     completed jobs beyond that cap (and their downloadable files) are
+     deleted automatically. Jobs still waiting on a manual gate are never
+     pruned by this rule.
+
+EDITABLE FIELDS
+None -- terminal state.

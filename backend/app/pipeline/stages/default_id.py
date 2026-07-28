@@ -2,22 +2,7 @@ import random
 
 import pandas as pd
 
-from .utils import _s
-from .validators import compute_id_validity
-
-
-def stage_clean_linebreaks(df: pd.DataFrame, **_):
-    for col in df.columns:
-        if df[col].dtype == object:
-            df[col] = df[col].astype(str).str.replace("\n", " ", regex=False).str.replace("\r", " ", regex=False)
-    return df, "Removed line breaks from all fields."
-
-
-def stage_reset_cms_fields(df: pd.DataFrame, **_):
-    for col in ["ACCOUNT_TYPE", "CARD_TYPE", "CARD_PROGRAM", "CARD_STATUS"]:
-        if col in df.columns:
-            df[col] = ""
-    return df, "Cleared ACCOUNT_TYPE, CARD_TYPE, CARD_PROGRAM, CARD_STATUS (to be repopulated from CMS)."
+from ..toolbox import _s, compute_id_validity
 
 
 def default_id_invalid_mask(df: pd.DataFrame) -> pd.Series:

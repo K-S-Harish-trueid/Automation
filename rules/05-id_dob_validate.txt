@@ -1,55 +1,61 @@
-STEP 5 - id_dob_validate ("ID & DoB Validation")
-Type: manual_edit (pages 200 flagged rows at a time)
-Source: backend/app/pipeline/validators.py :: compute_id_validity,
-         compute_dob_validity, mask_id_dob_invalid
-         backend/app/pipeline/reasons.py :: validation_reasons_id_dob
-         backend/app/pipeline/utils.py :: series_available, parse_dob_series
+STEP 5 -- id_dob_validate ("ID & DoB Validation")
+================================================================================
+TYPE      manual_edit (pages 200 flagged rows at a time)
+CODE      backend/app/pipeline/stages/id_dob_validate.py :: compute_dob_validity,
+          mask_id_dob_invalid, validation_reasons_id_dob
+          backend/app/pipeline/toolbox.py :: compute_id_validity, id_reason_checks,
+          series_available, parse_dob_series (shared with final_id_check/default_id)
 
-A row is flagged unless it passes ALL THREE checks below (ID type valid AND
-ID number valid for that type AND DOB valid).
+WHAT IT DOES
+A row passes only if it clears ALL THREE checks below: ID type valid, AND
+ID number valid for that type, AND DOB valid. Anything else is flagged.
 
-"Available" means: not blank after trimming, and not one of the placeholder
-values (case-insensitive): "", "0", "00000", "null", "none", "na", "n/a",
+DEFINITION -- "available"
+Not blank after trimming, and not one of the placeholder values (checked
+case-insensitively): "", "0", "00000", "null", "none", "na", "n/a",
 "xxx_not_collected_xxx".
 
-1) ID_TYPE CHECK
-   - ID_TYPE must be available (see above).
-   - If ID_TYPE (case-insensitive) == "doc": ALWAYS INVALID. Reason shown:
-     "ID type 'doc' is not accepted. Use Passport, National Id, or Civil Id."
-   - Accepted values (case-insensitive), otherwise invalid:
+CHECK 1 -- ID_TYPE
+  1. ID_TYPE must be available (see definition above); otherwise invalid.
+  2. If ID_TYPE (case-insensitive) == "doc" -> ALWAYS INVALID.
+     -> reason: "ID type 'doc' is not accepted. Use Passport, National Id,
+        or Civil Id."
+  3. Accepted values (case-insensitive), anything else is invalid:
        "passport"
        "national id" / "nid" / "nationalid"
        "civil id" / "civilid" / "civil_id"
-   - Anything else (including blank) is invalid with reason:
-     "ID type must be Passport, National Id, or Civil Id."
+     -> reason (for blank or unrecognized, non-"doc" values): "ID type
+        must be Passport, National Id, or Civil Id."
 
-2) ID_NUMBER CHECK (only meaningful once ID_TYPE is one of the accepted
-   types above; ID_NUMBER is never checked for "doc" or an unrecognized type)
-   - Passport: ID_NUMBER must fullmatch regex [A-Za-z][A-Za-z0-9]{7,8}
-     (one letter followed by 7-8 more letters/digits => 8-9 characters
-     total, first character must be a letter). Reason if it fails:
-     "Passport number must contain 8-9 alphanumeric characters and start
-     with a letter."
-   - National Id: ID_NUMBER must fullmatch regex \d{12} (exactly 12 digits,
-     no letters, no separators). Reason if it fails:
-     "National ID must contain exactly 12 digits."
-   - Civil Id: ID_NUMBER just needs to be "available" (see definition
-     above) -- no format/length check at all. Reason if missing:
-     "Civil ID number is required."
-   - If ID_TYPE itself is invalid/unrecognized, ID_NUMBER is reported as
-     unverifiable with reason: "ID number cannot be validated until a
-     valid ID type is selected."
+CHECK 2 -- ID_NUMBER (only meaningful once ID_TYPE is one of the three
+accepted types; never checked for "doc" or an unrecognized type)
+  1. Passport -> ID_NUMBER must fullmatch [A-Za-z][A-Za-z0-9]{7,8} (one
+     letter followed by 7-8 more letters/digits = 8-9 characters total,
+     first character must be a letter).
+     -> reason: "Passport number must contain 8-9 alphanumeric characters
+        and start with a letter."
+  2. National Id -> ID_NUMBER must fullmatch \d{12} (exactly 12 digits, no
+     letters, no separators).
+     -> reason: "National ID must contain exactly 12 digits."
+  3. Civil Id -> ID_NUMBER just needs to be "available" (see definition
+     above) -- no format/length check at all.
+     -> reason if missing: "Civil ID number is required."
+  4. If ID_TYPE itself is invalid/unrecognized, ID_NUMBER is reported as
+     unverifiable.
+     -> reason: "ID number cannot be validated until a valid ID type is
+        selected."
 
-3) DATE OF BIRTH CHECK (ACCOUNT_HOLDER_DOB)
-   - Must be available (see definition above); reason if not:
-     "DOB is missing."
-   - Must parse as a real date. Parsing tries the exact format
-     "%Y-%m-%d %H:%M:%S" first; if that fails, falls back to a flexible
-     day-first parse. If neither succeeds: "DOB is not a recognized date."
-   - Parsed year must not be 1900 (treated as a placeholder/default date):
-     "DOB cannot use the default year 1900."
-   - Age must be >= 18 years, computed as (today - DOB) in days / 365.25:
-     "DOB indicates the customer is under 18."
+CHECK 3 -- DATE OF BIRTH (ACCOUNT_HOLDER_DOB)
+  1. Must be available (see definition above).
+     -> reason if not: "DOB is missing."
+  2. Must parse as a real date -- tries the exact format
+     "%Y-%m-%d %H:%M:%S" first, then falls back to a flexible day-first
+     parse.
+     -> reason if neither succeeds: "DOB is not a recognized date."
+  3. Parsed year must not be 1900 (treated as a placeholder/default date).
+     -> reason: "DOB cannot use the default year 1900."
+  4. Age must be >= 18 years, computed as (today - DOB) in days / 365.25.
+     -> reason: "DOB indicates the customer is under 18."
 
 EDITABLE FIELDS
 ID_TYPE, ID_NUMBER, ACCOUNT_HOLDER_DOB.
@@ -60,5 +66,5 @@ ACCOUNT_NUMBER, ACCOUNT_FIRST_NAME, ACCOUNT_LAST_NAME.
 ADVANCE RULE
 Re-validates after every batch. Advances once zero rows remain flagged, or
 immediately on force_advance=true. Rows still ID-invalid when this step is
-skipped are picked up again at step 9 (final_id_check); the DOB check itself
-is NOT repeated later in the pipeline.
+skipped are picked up again at step 9 (final_id_check); the DOB check
+itself is NOT repeated later in the pipeline.

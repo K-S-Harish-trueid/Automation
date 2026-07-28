@@ -1,29 +1,33 @@
-STEP 8 - cms_integration ("CMS Data Integration")
-Type: upload (NOT skippable -- must be resolved with a file)
-Source: backend/app/pipeline/upload_stages.py :: stage_cms_integration,
-         validate_cms_reference_inputs
-         backend/app/pipeline/constants.py :: CMS_UPDATE_COLS
+STEP 8 -- cms_integration ("CMS Data Integration")
+================================================================================
+TYPE      upload (skippable)
+CODE      backend/app/pipeline/stages/cms_integration.py :: stage_cms_integration,
+          validate_cms_reference_inputs, CMS_UPDATE_COLS
 
-INPUT VALIDATION (upload is rejected if any of these fail)
-1. A CMS export file must be supplied.
-2. The file must contain ACCOUNT_NUMBER plus every column in
-   CMS_UPDATE_COLS (see below); missing columns reject the upload with an
-   explicit list of what's missing.
+WHAT IT DOES
+Merges card/account-type data from a CMS export into the dataset.
 
-MATCHING RULES
-1. Matching key: ACCOUNT_NUMBER, compared as a whitespace-trimmed string on
-   both sides.
-2. If ACCOUNT_NUMBER repeats within the CMS file, only the FIRST occurrence
-   is kept -- this is the opposite tie-break rule from step 2 (replace),
-   which keeps the LAST occurrence.
-3. Accounts with no match in the CMS file remain unresolved for these
-   fields -- since step 3 (reset_cms) already blanked them, they stay
-   blank.
+CONSTRAINTS -- upload is REJECTED if any of these fail
+  1. A CMS export file must be supplied.
+  2. The file must contain ACCOUNT_NUMBER plus every column in
+     CMS_UPDATE_COLS (see below) -- missing columns reject the upload with
+     an explicit list of what's missing.
+
+MATCHING RULES (once validation above passes)
+  1. Match key: ACCOUNT_NUMBER, compared as a whitespace-trimmed string on
+     both sides.
+  2. If ACCOUNT_NUMBER repeats within the CMS file, only the FIRST
+     occurrence is kept -- the opposite tie-break rule from step 2
+     (replace), which keeps the LAST occurrence.
+  3. Accounts with no match in the CMS file remain unresolved for these
+     fields -- since step 3 (reset_cms) already blanked them, they stay
+     blank.
 
 FIELDS OVERWRITTEN FOR MATCHED ACCOUNTS (CMS_UPDATE_COLS)
 CARD_NUMBER, ACCOUNT_TYPE, CARD_TYPE, CARD_PROGRAM, CARD_STATUS.
 (Note: unlike step 2, this step DOES update CARD_NUMBER.)
 
 SKIP RULE
-This stage is not marked skippable in the current pipeline configuration --
-an operator cannot advance without uploading a valid CMS export.
+Skippable: POST /jobs/{id}/skip advances without uploading anything. Skipped
+accounts stay unresolved for CMS_UPDATE_COLS -- since step 3 (reset_cms)
+already blanked those fields, they stay blank.

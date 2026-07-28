@@ -1,30 +1,37 @@
-STEP 10 - default_id ("Default ID Assignment")
-Type: confirm (requires explicit operator confirmation, no editing)
-Source: backend/app/pipeline/auto_stages.py :: stage_default_id_assign,
-         default_id_invalid_mask
+STEP 10 -- default_id ("Default ID Assignment")
+================================================================================
+TYPE      confirm (requires explicit operator confirmation, no editing)
+CODE      backend/app/pipeline/stages/default_id.py :: stage_default_id_assign,
+          default_id_invalid_mask
+
+WHAT IT DOES
+Guarantees every row leaves the pipeline with a valid ID, by generating one
+for whatever the operator did not (or could not) fix manually at step 9.
 
 SCOPE
 Applies to every row that still fails the same ID_TYPE/ID_NUMBER validity
-check used in steps 5 and 9 (compute_id_validity) after step 9 has run --
-i.e. whatever the operator did not (or could not) fix manually.
+check used in steps 5 and 9 (compute_id_validity), evaluated after step 9
+has finished.
 
-PREVIEW
-Before running, the API reports how many rows will be affected
-(GET /jobs/{id}/current for a confirm stage returns affected_count), so the
-operator can see the impact before confirming.
+CONSTRAINTS
+  1. PREVIEW FIRST -- before running, GET /jobs/{id}/current for this
+     stage returns affected_count, so the operator sees the impact before
+     confirming.
+  2. UNIQUENESS -- build a set of every ID_NUMBER value already present
+     anywhere in the dataset, including on rows still invalid, to
+     guarantee no collisions with existing data.
+  3. GENERATION -- for each affected row, generate a candidate ID
+     formatted as "00" + 6 random digits (pattern 00######, always 8
+     characters). Re-roll if the candidate is already in the used set
+     (own newly generated IDs included), so every generated ID is unique
+     across the whole dataset.
+  4. ASSIGNMENT -- set ID_NUMBER to the generated value and ID_TYPE to
+     "Civil Id" for every affected row. No other fields are touched.
 
-GENERATION RULE
-1. Build a set of every ID_NUMBER value already present anywhere in the
-   dataset, including on rows that are still invalid -- this set is used to
-   guarantee no collisions with existing data.
-2. For each affected row, generate a candidate ID formatted as:
-     "00" + 6 random digits   (pattern: 00######, always 8 characters)
-   Re-roll if the candidate is already in the used set (own generated IDs
-   included), so every generated ID is unique across the whole dataset.
-3. Set ID_NUMBER = the generated value and ID_TYPE = "Civil Id" for every
-   affected row. No other fields are touched.
+EDITABLE FIELDS
+None -- this step assigns, it doesn't accept operator edits.
 
-TRIGGER
+ADVANCE RULE
 Only runs after an explicit POST /jobs/{id}/confirm call; there is no
 skip -- every row still invalid at this point WILL receive a generated ID
 before the job can reach "done".

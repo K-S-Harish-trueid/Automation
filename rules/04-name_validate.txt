@@ -1,22 +1,24 @@
-STEP 4 - name_validate ("Name Validation")
-Type: manual_edit (pages 200 flagged rows at a time)
-Source: backend/app/pipeline/validators.py :: mask_name_invalid
-         backend/app/pipeline/reasons.py :: validation_reasons_name
+STEP 4 -- name_validate ("Name Validation")
+================================================================================
+TYPE      manual_edit (pages 200 flagged rows at a time)
+CODE      backend/app/pipeline/stages/name_validate.py :: mask_name_invalid,
+          validation_reasons_name
 
-FLAGGING RULE
-A row is flagged for manual correction if, after trimming whitespace, ANY
-of the following is exactly 1 character long:
-  - ACCOUNT_FIRST_NAME
-  - ACCOUNT_MIDDLE_NAME
-  - ACCOUNT_LAST_NAME
-(Blank/empty names are NOT flagged by this rule -- only single-character
-names are; 0-length and 2+ length both pass.)
+WHAT IT DOES
+Catches names that were clearly truncated to a single character on the way
+in (a common source-data glitch) and routes them for manual correction.
 
-REASON MESSAGES SHOWN TO THE OPERATOR
-- "First name contains only one character."
-- "Middle name contains only one character."
-- "Last name contains only one character."
+CONSTRAINTS (a row is flagged if ANY of these is true, after trimming
+whitespace)
+  1. ACCOUNT_FIRST_NAME is exactly 1 character long.
+     -> reason: "First name contains only one character."
+  2. ACCOUNT_MIDDLE_NAME is exactly 1 character long.
+     -> reason: "Middle name contains only one character."
+  3. ACCOUNT_LAST_NAME is exactly 1 character long.
+     -> reason: "Last name contains only one character."
 A row can show more than one reason at once if multiple fields qualify.
+NOTE: blank/empty names are NOT flagged by this rule -- 0-length and
+2+-length both pass; only exactly 1 character trips it.
 
 EDITABLE FIELDS
 ACCOUNT_FIRST_NAME, ACCOUNT_MIDDLE_NAME, ACCOUNT_LAST_NAME.
@@ -25,7 +27,6 @@ CONTEXT COLUMNS SHOWN (read-only)
 ACCOUNT_NUMBER.
 
 ADVANCE RULE
-The step re-validates after every batch of edits. It advances automatically
-once zero rows remain flagged, or immediately if the operator submits with
-force_advance=true (remaining flagged rows are left as-is and not revisited
-by this pipeline).
+Re-validates after every batch. Advances once zero rows remain flagged, or
+immediately on force_advance=true (remaining flagged rows are left as-is
+and not revisited later in the pipeline).

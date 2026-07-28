@@ -1,0 +1,99 @@
+STEP 6 -- address_fix ("Address Auto-Fix")
+================================================================================
+TYPE      auto (runs automatically, no operator input)
+CODE      backend/app/pipeline/stages/address_fix.py :: stage_address_fix,
+          mask_address_invalid, INVALID_ADDRESS_VALUES, BAGHDAD_ADDRESS_POOL,
+          PROVINCE_ADDRESS_MAP -- everything address-specific lives in this
+          one file
+          backend/app/pipeline/toolbox.py :: series_has_letter, balanced_assign
+          (generic helpers, shared with other stages)
+
+WHAT IT DOES
+Auto-fills ACCOUNT_ADDRESS (and sometimes ADDRESS_CITY/ADDRESS_PROVINCE)
+for rows whose address is invalid, using a synthetic value pulled from a
+Baghdad or per-province address pool. Ported from the legacy address-fix
+script (aman/pah3.py inside the unzipped `K2 Data Preparation Automation`
+bundle) at explicit request, after an earlier version of this pipeline had
+this removed for fabricating data with no human involved -- it is back by
+design now, not a regression. There is NO manual review step after this
+one; whatever this stage can't fix is left invalid (see LIMITATION below).
+
+WHAT COUNTS AS INVALID (reused from before this stage went auto -- see
+mask_address_invalid; a row trips this if ANY is true)
+  1. MISSING -- ACCOUNT_ADDRESS is blank, or a PLACEHOLDERS value ("0",
+     "00000", "null", "n/a", ...), case-insensitively.
+  2. NO LETTERS -- present but contains no alphabetic character in any
+     script (Latin, Arabic, etc.) -- e.g. a phone number, a coordinate
+     pair, or leftover punctuation ("-"). Checked with series_has_letter()
+     (Python str.isalpha() per character, NOT a pandas `\W` regex -- see
+     IMPLEMENTATION NOTE below, this bit is unchanged from before).
+  3. KNOWN-JUNK EXACT MATCH -- exact match (trimmed, case-insensitive)
+     against INVALID_ADDRESS_VALUES, which catches junk that DOES contain
+     letters and so slips past rule 2 (e.g. "JUNE", "A", "198qgghjkk0").
+     This is the same 61-value list as the legacy script's own
+     INVALID_ADDRESSES denylist. Exact match only -- "JUNE residency ext"
+     does NOT match "JUNE" and is treated as a normal address, same as the
+     legacy script.
+This is broader than the legacy script, which ONLY did check 3 (a plain
+`.isin()` against its denylist) -- checks 1 and 2 catch real junk that
+isn't literally in that fixed list (e.g. any other digits-only string).
+
+CONSTRAINTS -- applied in this order, each recomputing "still invalid"
+against the previous case's results before running
+  1. OUTSIDE THE COUNTRY
+     ADDRESS_PROVINCE (case-insensitive) == "outside the country" AND
+     address invalid -> set ADDRESS_CITY = ADDRESS_PROVINCE = "Baghdad",
+     ACCOUNT_ADDRESS = one value from BAGHDAD_ADDRESS_POOL. Can't
+     province-map an "outside the country" row, so it defaults to the
+     general Baghdad pool instead.
+
+  2. CITY PLACEHOLDER + INVALID ADDRESS
+     ADDRESS_CITY == "00000" AND address invalid (and not already handled
+     by constraint 1) -> same as above: city/province -> "Baghdad",
+     ACCOUNT_ADDRESS -> BAGHDAD_ADDRESS_POOL.
+
+  3. REAL CITY + INVALID ADDRESS
+     ADDRESS_CITY != "00000" AND address invalid -> look up the row's
+     ADDRESS_PROVINCE in PROVINCE_ADDRESS_MAP. If mapped, replace only
+     ACCOUNT_ADDRESS with a value from that province's pool (city/province
+     fields are left as they are). If the province has NO entry in
+     PROVINCE_ADDRESS_MAP, nothing is replaced -- the row is left invalid.
+
+  4. CITY PLACEHOLDER + ALREADY-VALID ADDRESS
+     ADDRESS_CITY == "00000" AND address is NOT invalid -> just default
+     city/province to "Baghdad", keep the existing address untouched.
+
+POOL ASSIGNMENT
+Within each case, addresses are handed out via balanced_assign(): options
+are distributed as evenly as possible across the affected rows, then
+shuffled with a FIXED seed (42) -- deterministic, so re-running the same
+input always produces the same synthetic addresses (matches the legacy
+script's balanced_assign_indices exactly).
+
+LIMITATION -- READ BEFORE RELYING ON "0 invalid addresses remaining"
+Constraint 3's unmapped-province case is the only way a row can still be
+invalid after this stage runs, and unlike every other manual_edit stage in
+this pipeline, nothing downstream re-checks ACCOUNT_ADDRESS -- there is no
+human review left for it. The only place a leftover shows up is the
+`invalid_addresses_remaining` tile on the Done screen and in the audit
+trail (this stage's changes are logged like any other auto stage). If a
+production run's ADDRESS_PROVINCE values fall outside PROVINCE_ADDRESS_MAP
+(e.g. spelled differently than the map's keys), those rows ship with a
+still-bad address and no flag anyone will see except that tile.
+
+IMPLEMENTATION NOTE -- read before touching the "no letters" check again
+series_has_letter() uses Python's own str.isalpha() per character via
+.map() -- NOT a `\w`/`\W` regex through pandas' vectorized .str.contains().
+This was deliberate: on the pandas version this project runs (the "str"
+dtype is default), regex character classes like `\W` silently give wrong
+answers for non-Latin text -- verified directly against a real ~65k-row
+Arabic-address file, where a `\W`-based version of this exact rule wrongly
+flagged 52,111 of 52,120 Arabic addresses as invalid (nearly all of them;
+correct answer was 9). Do not swap this back to a `.str.contains(r"...\W...")`
+pattern without re-testing against real Arabic data first.
+
+EDITABLE FIELDS
+None -- fully automatic, no operator interaction.
+
+ADVANCE RULE
+Always advances immediately; there is nothing to wait on.

@@ -82,6 +82,7 @@ const STAGE_SIDEBAR_ICONS = {
   reset_cms: "rotate",
   name_validate: "userCheck",
   id_dob_validate: "idCard",
+  address_fix: "mapPin",
   mobile_fill: "smartphone",
   cms_integration: "puzzle",
   send_email: "mail",
@@ -1018,6 +1019,7 @@ function renderDone(current) {
         <span><b>Names corrected</b>${(quality.names_corrected || 0).toLocaleString()}</span>
         <span><b>Operator corrections</b>${(quality.operator_corrections || 0).toLocaleString()}</span>
         <span><b>Invalid DOBs remaining</b>${(quality.invalid_dobs_remaining || 0).toLocaleString()}</span>
+        <span><b>Invalid addresses remaining</b>${(quality.invalid_addresses_remaining || 0).toLocaleString()}</span>
         <span><b>Missing phones remaining</b>${(quality.missing_phones_remaining || 0).toLocaleString()}</span>
         <span><b>Generated IDs assigned</b>${(quality.generated_ids_assigned || 0).toLocaleString()}</span>
         <span><b>CMS matches</b>${(quality.cms_matches || 0).toLocaleString()}</span>

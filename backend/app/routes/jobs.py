@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 
 from .. import pipeline, store
 from ..background import _run_in_background
-from ..helpers import _autofit_worksheet, _current_stage, _public_job_status, _require_job, _write_stage_sheets_xlsx
+from ..helpers import _autofit_worksheet, _current_stage, _public_job_status, _require_job, _write_flat_xlsx
 
 router = APIRouter()
 
@@ -96,8 +96,8 @@ def download_final(job_id: str):
     df = store.get_df(job_id)
     out_dir = store.JOBS_DIR / job_id
     out_path = out_dir / "final.xlsx"
-    _write_stage_sheets_xlsx(df, out_path)
-    return FileResponse(out_path, filename=f"{job_id}.xlsx")
+    _write_flat_xlsx(df, out_path)
+    return FileResponse(out_path, filename=f"{job_id}_final.xlsx")
 
 
 @router.get("/api/jobs/{job_id}/audit")
@@ -120,4 +120,4 @@ def download_audit(job_id: str):
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         audit_df.to_excel(writer, sheet_name="Sheet1", index=False)
         _autofit_worksheet(writer.sheets["Sheet1"], audit_df)
-    return FileResponse(out_path, filename="K2_Data_Audit.xlsx")
+    return FileResponse(out_path, filename=f"{job_id}_audit.xlsx")

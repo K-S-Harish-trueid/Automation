@@ -73,13 +73,47 @@ flagging before you expose it beyond your own machine/network.
 ```
 backend/
   app/
-    main.py       FastAPI routes: create job, advance stages, upload/submit/confirm, download
-    pipeline.py   Stage logic ported from clean.py / replace.py / cmsdata.py / idvalid.py /
-                  dobvalid.py / pah3.py — pure functions over an in-memory DataFrame
-    store.py      Per-job state: in-memory dict + a disk snapshot (parquet + status.json)
-                  under jobs/<job_id>/, so a job survives a server restart
-  jobs/           Runtime data, one folder per job (gitignored, safe to delete when idle)
+    main.py         FastAPI app setup, router mounting
+    routes/         API endpoints (jobs, stage actions, rollback), thin --
+                    delegate the actual work to pipeline/ and store.py
+    background.py   Runs the auto-stage chain in a background thread after
+                    each action endpoint returns
+    store.py        Per-job state: in-memory dict + a disk snapshot (parquet
+                    + status.json) under jobs/<job_id>/, survives a restart
+    helpers.py       Cross-cutting glue: audit-event recording, quality
+                    summary, xlsx export writers
+    pipeline/       Stage logic ported from clean.py / replace.py / cmsdata.py /
+                    idvalid.py / dobvalid.py / pah3.py / mobileupd.py, one file
+                    per pipeline stage -- see below
+  jobs/             Runtime data, one folder per job (gitignored, safe to delete when idle)
   requirements.txt
+```
+
+### `pipeline/` layout
+
+One file per stage, named after the stage id (matches `rules/NN-<id>.txt`),
+so a change scoped to one stage only touches that stage's file:
+
+```
+pipeline/
+  __init__.py       Re-exports the public surface (pipeline.STAGES,
+                    pipeline.mask_name_invalid(...), etc.) regardless of
+                    which file below something actually lives in
+  registry.py        The wiring list: STAGES order, AUTO_HANDLERS,
+                    UPLOAD_HANDLERS, CONFIRM_HANDLERS, MANUAL_STAGES --
+                    only changes when a stage is added/removed/reordered
+  toolbox.py         Helpers 2+ stages genuinely share: generic Series
+                    helpers (series_available, series_has_letter, ...) and
+                    the ID_TYPE/ID_NUMBER check reused by id_dob_validate,
+                    final_id_check, and default_id
+  stages/
+    clean.py, replace.py, reset_cms.py, name_validate.py,
+    id_dob_validate.py, address_fix.py, mobile_fill.py, cms_integration.py,
+    final_id_check.py, default_id.py
+                    Each file: that stage's own constants, validator,
+                    reason messages, and handler -- nothing else. (send_email
+                    and done have no pipeline-layer code -- handled directly
+                    in routes/.)
 ```
 
 ## Pipeline stages
@@ -94,12 +128,13 @@ back and stops on the others until the frontend (or an API call) resolves them.
 | 3 | `reset_cms` | auto | Blanks `ACCOUNT_TYPE`/`CARD_TYPE`/`CARD_PROGRAM`/`CARD_STATUS` |
 | 4 | `name_validate` | manual_edit | Flags 1-character first/middle/last names for inline correction |
 | 5 | `id_dob_validate` | manual_edit | Flags invalid `ID_TYPE`/`ID_NUMBER`/DoB for inline correction |
-| 6 | `mobile_fill` | manual_edit | Flags accounts with no phone number (blank, `XXX_NOT_COLLECTED_XXX`, or all-zero) for inline entry |
-| 7 | `cms_integration` | upload | Upload a CMS export; merges `CARD_NUMBER`/`ACCOUNT_TYPE`/`CARD_TYPE`/`CARD_PROGRAM`/`CARD_STATUS`. Skippable; also shows a disabled "Invoke via API (coming soon)" placeholder |
-| 8 | `send_email` | email | Stub checkpoint: download the in-progress dataset to share manually; "Continue" just advances (no real send yet). Skippable |
-| 9 | `final_id_check` | manual_edit | Last pass on any still-invalid IDs |
-| 10 | `default_id` | confirm | Assigns a random 8-digit ID (`00######`) + `Civil Id` type to whatever is still invalid |
-| 11 | `done` | done | Final dataset ready to download |
+| 6 | `address_fix` | auto | Auto-fills accounts with a missing address, an address with no letters at all (e.g. a phone number or placeholder), or an exact match against a known-junk denylist (e.g. "JUNE", a single letter) — replacement pulled from a Baghdad/province address pool, ported from the legacy `pah3.py` script. Rows whose province has no pool entry are left invalid, with no later step re-checking them — see `rules/06-address_fix.txt` |
+| 7 | `mobile_fill` | manual_edit | Flags accounts with no phone number (blank, `XXX_NOT_COLLECTED_XXX`, or all-zero) for inline entry |
+| 8 | `cms_integration` | upload | Upload a CMS export; merges `CARD_NUMBER`/`ACCOUNT_TYPE`/`CARD_TYPE`/`CARD_PROGRAM`/`CARD_STATUS`. Skippable; also shows a disabled "Invoke via API (coming soon)" placeholder |
+| 9 | `send_email` | email | Stub checkpoint: download the in-progress dataset to share manually; "Continue" just advances (no real send yet). Skippable |
+| 10 | `final_id_check` | manual_edit | Last pass on any still-invalid IDs |
+| 11 | `default_id` | confirm | Assigns a random 8-digit ID (`00######`) + `Civil Id` type to whatever is still invalid |
+| 12 | `done` | done | Final dataset ready to download |
 
 `manual_edit` stages page 200 flagged rows at a time; submitting a batch
 re-validates and either loads the next batch or advances. Every manual stage
@@ -108,10 +143,11 @@ fixing them.
 
 **Manual-edit stages are currently bypassed entirely**
 (`BYPASS_MANUAL_EDIT_STAGES = True` in `app/background.py`): the background
-runner auto-advances `name_validate`/`id_dob_validate`/`mobile_fill`/
-`final_id_check` the same way it chains `auto` stages, logging a history
-entry with how many rows were left flagged. The frontend never sees these
-stages while the flag is on. Flip it to `False` to restore the normal
+runner auto-advances `name_validate`/`id_dob_validate`/
+`mobile_fill`/`final_id_check` the same way it chains `auto` stages, logging a history
+entry with how many rows were left flagged. (`address_fix` is a real `auto`
+stage now, not a bypassed manual one — it always runs, flag or no flag.)
+The frontend never sees the bypassed stages while the flag is on. Flip it to `False` to restore the normal
 interactive gate — nothing behind it was removed, and the previously-added
 `MANUAL_EDIT_ENABLED` flag (view-only vs. editable table, `app/routes/stage.py`)
 still governs behavior whenever a manual_edit stage *is* shown again. A job
@@ -139,14 +175,18 @@ a background thread. Poll `/progress` until it stops reporting
 | `POST /jobs/{id}/send-email` | Advance the `send_email` stage (stub — no data change, no real email sent yet) |
 | `GET /jobs/{id}/email/download` | Download the in-progress dataset as `{job_id}.xlsx` while parked at the `send_email` stage; repeatable, no side effects |
 | `POST /jobs/{id}/confirm` | Resolve a `confirm` stage in the background |
-| `GET /jobs/{id}/download` | Download the final dataset as `{job_id}.xlsx` once the job reaches `done` |
+| `GET /jobs/{id}/download` | Download the final dataset as `{job_id}_final.xlsx` once the job reaches `done` |
+| `GET /jobs/{id}/audit/download` | Download the audit trail as `{job_id}_audit.xlsx` |
 
-Both the `send_email` and final `.xlsx` downloads are one workbook split
-into a separate named sheet per topic (`Name Validation`,
-`ID & DoB Validation`, `Address & Contact`, `Missing Mobile
-Numbers`, `CMS Data Integration`, `Final ID Validation`), each keyed by
-`ACCOUNT_NUMBER`, rather than one flat sheet with every column — see
-`_write_stage_sheets_xlsx` / `_EXPORT_SHEET_COLUMNS` in `app/helpers.py`.
+The `send_email` download is one workbook split into a separate named sheet
+per manual-review topic (`Name Validation`, `ID & DoB Validation`,
+`Missing Mobile Numbers`, `CMS Data Integration`, `Final ID
+Validation`) cut down to
+each stage's flagged rows plus a `validation_notes` column explaining why —
+see `_write_review_sheets_xlsx` / `_REVIEW_SHEET_COLUMNS` in
+`app/helpers.py`. The final `.xlsx` download is different: by then there's
+nothing left to review, so it's one flat sheet with every column, the same
+shape as the original raw import — see `_write_flat_xlsx`.
 
 Calling an action endpoint again while a job is already processing gets a
 `409 Conflict` instead of starting a second run.

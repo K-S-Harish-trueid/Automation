@@ -112,6 +112,7 @@ def _quality_summary(df: pd.DataFrame, status: dict) -> dict:
     remaining = {
         "invalid_names_remaining": int(pipeline.mask_name_invalid(df).sum()),
         "invalid_dobs_remaining": int((~pipeline.compute_dob_validity(df)).sum()),
+        "invalid_addresses_remaining": int(pipeline.mask_address_invalid(df).sum()),
         "missing_phones_remaining": int(pipeline.mask_mobile_missing(df).sum()),
         "invalid_ids_remaining": int(pipeline.mask_id_only_invalid(df).sum()),
     }
@@ -136,15 +137,12 @@ def _validate_edit_items(df: pd.DataFrame, cfg: dict, edits: list[EditItem]):
             raise HTTPException(400, f"row_key {edit.row_key} not found")
 
 
-# (stage_id, columns) pairs used to split a full-width export into one named
-# sheet per pipeline-stage topic instead of one flat sheet. Sheet names come
+# (stage_id, columns) pairs for the Send Email reviewer handoff -- one named
+# sheet per manual-edit stage topic, plus the CMS exception. Sheet names come
 # from the matching STAGES title so they stay in sync with the registry.
-_EXPORT_SHEET_COLUMNS = [
+_REVIEW_SHEET_COLUMNS = [
     ("name_validate", ["ACCOUNT_FIRST_NAME", "ACCOUNT_MIDDLE_NAME", "ACCOUNT_LAST_NAME"]),
     ("id_dob_validate", ["ID_TYPE", "ID_NUMBER", "ACCOUNT_HOLDER_DOB"]),
-    # Not a pipeline stage (the auto-fix step was removed) -- this key isn't a
-    # stage id, so the title lookup below falls back to using it as-is.
-    ("Address & Contact", ["ACCOUNT_ADDRESS", "ADDRESS_CITY", "ADDRESS_PROVINCE", "ADDRESS_COUNTRY", "POSTAL_CODE"]),
     ("mobile_fill", ["PHONE_NUMBER"]),
     ("cms_integration", ["CARD_NUMBER", "ACCOUNT_TYPE", "CARD_TYPE", "CARD_PROGRAM", "CARD_STATUS"]),
     ("final_id_check", ["ID_TYPE", "ID_NUMBER"]),
@@ -154,7 +152,7 @@ _EXPORT_SHEET_COLUMNS = [
 def _validation_notes_column(df: pd.DataFrame, stage_id: str) -> pd.Series | None:
     """Per-row 'why is this flagged' text for sheets that map to a manual_edit
     stage's validator/reasons pair; None for sheets with no such rule (e.g.
-    Address & Contact, CMS Data Integration)."""
+    CMS Data Integration)."""
     cfg = pipeline.MANUAL_STAGES.get(stage_id)
     if not cfg:
         return None
@@ -165,39 +163,39 @@ def _validation_notes_column(df: pd.DataFrame, stage_id: str) -> pd.Series | Non
     )
 
 
-def _write_stage_sheets_xlsx(df: pd.DataFrame, out_path, *, include_validation_notes: bool = False) -> None:
-    """Write the current dataset as one workbook with a separate named sheet
-    per pipeline-stage topic (Name Validation, ID & DoB, Mobile, CMS Data
-    Integration...), each keyed by ACCOUNT_NUMBER -- used for the final
-    download and the Send Email checkpoint download, instead of dumping
-    everything onto one flat sheet.
-
-    include_validation_notes switches this from the full final-output export
-    to the Send Email reviewer handoff: manual-edit stages (name, ID/DoB,
-    mobile, final ID) are cut down to only their flagged rows and get a
-    'validation_notes' column explaining why, since manual-edit stages are
-    bypassed and an outside reviewer needs to know what to fix without the
-    tool's UI. Sheets that never needed manual review (Address & Contact --
-    the auto-fix step that used to own it was removed) are dropped entirely.
-    CMS Data Integration is the one exception: it's a merge report, not a
-    validation gate, so it keeps every row, unfiltered, with no notes
-    column."""
+def _write_review_sheets_xlsx(df: pd.DataFrame, out_path) -> None:
+    """Write the Send Email reviewer handoff: one sheet per manual-edit stage
+    topic (Name Validation, ID & DoB, Mobile, Final ID), cut down to only
+    that stage's flagged rows with a 'validation_notes' column explaining why
+    -- since manual-edit stages are bypassed and an outside reviewer needs to
+    know what to fix without the tool's UI. CMS Data Integration is the one
+    exception: it's a merge report, not a validation gate, so it keeps every
+    row, unfiltered, with no notes column."""
     titles = {s["id"]: s["title"] for s in pipeline.STAGES}
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        for stage_id, cols in _EXPORT_SHEET_COLUMNS:
+        for stage_id, cols in _REVIEW_SHEET_COLUMNS:
             cfg = pipeline.MANUAL_STAGES.get(stage_id)
-            if include_validation_notes and cfg is None and stage_id != "cms_integration":
-                continue
             available = [c for c in cols if c in df.columns]
             if not available:
                 continue
-            sheet_df = df.loc[cfg["validator"](df)] if include_validation_notes and cfg else df
+            sheet_df = df.loc[cfg["validator"](df)] if cfg else df
             sheet = sheet_df[["ACCOUNT_NUMBER", *available]].copy()
-            if include_validation_notes and cfg:
+            if cfg:
                 sheet["validation_notes"] = _validation_notes_column(sheet_df, stage_id).values
             sheet_name = titles.get(stage_id, stage_id)[:31]
             sheet.to_excel(writer, sheet_name=sheet_name, index=False)
             _autofit_worksheet(writer.sheets[sheet_name], sheet)
+
+
+def _write_flat_xlsx(df: pd.DataFrame, out_path) -> None:
+    """Write the current dataset as a single flat sheet with every column --
+    the same shape as the original raw import. Used for the final download
+    once the pipeline is done: by then there's nothing left to review, so
+    the topic-split, flagged-rows-only format used for the Send Email
+    handoff (_write_review_sheets_xlsx) doesn't apply."""
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Final Output", index=False)
+        _autofit_worksheet(writer.sheets["Final Output"], df)
 
 
 def _upload_metrics(df: pd.DataFrame, ref_df: pd.DataFrame) -> dict:
