@@ -1,0 +1,31 @@
+STEP 9 - final_id_check ("Final ID Validation")
+Type: manual_edit (pages 200 flagged rows at a time)
+Source: backend/app/pipeline/validators.py :: compute_id_validity,
+         mask_id_only_invalid
+         backend/app/pipeline/reasons.py :: validation_reasons_id_only,
+         _id_reason_checks
+
+FLAGGING RULE
+Identical ID_TYPE / ID_NUMBER logic as step 5 (id_dob_validate) -- see that
+step's constrain.txt for the full breakdown. Summary:
+  - ID_TYPE must be Passport / National Id (or "nid"/"nationalid") /
+    Civil Id (or "civilid"/"civil_id"); "doc" and anything else are invalid.
+  - Passport ID_NUMBER: regex [A-Za-z][A-Za-z0-9]{7,8} (8-9 chars, starts
+    with a letter).
+  - National Id ID_NUMBER: regex \d{12} (exactly 12 digits).
+  - Civil Id ID_NUMBER: just needs to be present/non-placeholder.
+IMPORTANT DIFFERENCE FROM STEP 5: Date of birth is NOT checked here at all
+-- this step only re-examines ID_TYPE and ID_NUMBER, giving the operator one
+last pass at IDs that were force-advanced past earlier, or that CMS/replace
+data introduced/changed since step 5.
+
+EDITABLE FIELDS
+ID_TYPE, ID_NUMBER.
+
+CONTEXT COLUMNS SHOWN (read-only)
+ACCOUNT_NUMBER, ACCOUNT_FIRST_NAME, ACCOUNT_LAST_NAME.
+
+ADVANCE RULE
+Re-validates after every batch. Advances once zero rows remain flagged, or
+immediately on force_advance=true. Any row still ID-invalid when this step
+ends is handed to step 10 (default_id) for an auto-generated ID.

@@ -1,0 +1,17 @@
+STEP 11 - done ("Final Output")
+Type: done (terminal state, nothing left to run)
+Source: backend/app/routes/jobs.py :: download_final, download_audit
+
+RULES
+1. No further transformation of the data happens at this step -- the
+   DataFrame is exactly what step 10 (default_id) produced.
+2. The final dataset is downloadable as an .xlsx file named "jod.xlsx"
+   (GET /jobs/{id}/download); every column present in the working DataFrame
+   is written out, in its current column order.
+3. A separate audit trail of every field-level change made across every
+   prior step (source file, operator, reason, old/new value, timestamp) can
+   be downloaded independently as an .xlsx via GET /jobs/{id}/audit/download.
+4. Per job retention rules, once a job reaches "done" it counts against the
+   configured cap of most-recently-completed jobs kept on disk -- older
+   completed jobs beyond that cap (and their downloadable files) are deleted
+   automatically. Jobs still waiting on a manual gate are never pruned.

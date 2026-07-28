@@ -1,0 +1,15 @@
+STEP 3 - reset_cms ("Reset CMS Fields")
+Type: auto (runs automatically, no operator input)
+Source: backend/app/pipeline/auto_stages.py :: stage_reset_cms_fields
+
+RULES
+1. Unconditionally blanks (sets to empty string "") these four columns for
+   every row in the dataset: ACCOUNT_TYPE, CARD_TYPE, CARD_PROGRAM,
+   CARD_STATUS.
+2. This happens regardless of what step 2 (historical override) did or
+   didn't fill in -- any values those fields held going into this step are
+   discarded.
+3. Purpose: guarantees these four fields are only ever populated by the
+   CMS Data Integration step (step 8), never by stale source data or the
+   historical override file.
+4. No validation, no flagged rows, no operator interaction.

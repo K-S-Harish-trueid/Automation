@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pandas>=2.0
+numpy
+openpyxl
+xlrd>=2.0.1
+pyarrow

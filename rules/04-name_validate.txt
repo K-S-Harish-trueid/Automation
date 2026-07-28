@@ -1,0 +1,31 @@
+STEP 4 - name_validate ("Name Validation")
+Type: manual_edit (pages 200 flagged rows at a time)
+Source: backend/app/pipeline/validators.py :: mask_name_invalid
+         backend/app/pipeline/reasons.py :: validation_reasons_name
+
+FLAGGING RULE
+A row is flagged for manual correction if, after trimming whitespace, ANY
+of the following is exactly 1 character long:
+  - ACCOUNT_FIRST_NAME
+  - ACCOUNT_MIDDLE_NAME
+  - ACCOUNT_LAST_NAME
+(Blank/empty names are NOT flagged by this rule -- only single-character
+names are; 0-length and 2+ length both pass.)
+
+REASON MESSAGES SHOWN TO THE OPERATOR
+- "First name contains only one character."
+- "Middle name contains only one character."
+- "Last name contains only one character."
+A row can show more than one reason at once if multiple fields qualify.
+
+EDITABLE FIELDS
+ACCOUNT_FIRST_NAME, ACCOUNT_MIDDLE_NAME, ACCOUNT_LAST_NAME.
+
+CONTEXT COLUMNS SHOWN (read-only)
+ACCOUNT_NUMBER.
+
+ADVANCE RULE
+The step re-validates after every batch of edits. It advances automatically
+once zero rows remain flagged, or immediately if the operator submits with
+force_advance=true (remaining flagged rows are left as-is and not revisited
+by this pipeline).
