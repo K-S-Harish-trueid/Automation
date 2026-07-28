@@ -1,6 +1,5 @@
 from .auto_stages import (
     default_id_invalid_mask,
-    stage_address_fix,
     stage_clean_linebreaks,
     stage_default_id_assign,
     stage_reset_cms_fields,
@@ -30,7 +29,6 @@ STAGES = [
     {"id": "reset_cms", "title": "Reset CMS Fields", "type": "auto"},
     {"id": "name_validate", "title": "Name Validation", "type": "manual_edit"},
     {"id": "id_dob_validate", "title": "ID & DoB Validation", "type": "manual_edit"},
-    {"id": "address_fix", "title": "Address & Contact Auto-Fix", "type": "auto"},
     {"id": "mobile_fill", "title": "Missing Mobile Numbers", "type": "manual_edit"},
     {"id": "cms_integration", "title": "CMS Data Integration", "type": "upload",
      "skippable": True, "api_invoke_planned": True,
@@ -52,7 +50,6 @@ STAGES = [
 AUTO_HANDLERS = {
     "clean": stage_clean_linebreaks,
     "reset_cms": stage_reset_cms_fields,
-    "address_fix": stage_address_fix,
 }
 
 UPLOAD_HANDLERS = {

@@ -1121,15 +1121,6 @@ input:focus-visible,
 .recovery-panel { margin-top: 24px; padding: 2px 0 0 16px; border-left: 3px solid var(--danger); }
 .recovery-panel .row-actions { margin-top: 16px; }
 
-/* Reopen variant: only 2 guidance cards per column */
-.upload-workbench-reopen .upload-guidance { gap: 14px; }
-.upload-workbench-reopen .upload-guidance > .guidance-card {
-  border-color: rgba(240, 180, 75, 0.18);
-}
-.upload-workbench-reopen .upload-guidance > .guidance-card:hover {
-  border-color: rgba(240, 180, 75, 0.35);
-}
-
 /* ---------- Review table ---------- */
 
 .review-toolbar {

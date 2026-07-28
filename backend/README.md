@@ -94,13 +94,12 @@ back and stops on the others until the frontend (or an API call) resolves them.
 | 3 | `reset_cms` | auto | Blanks `ACCOUNT_TYPE`/`CARD_TYPE`/`CARD_PROGRAM`/`CARD_STATUS` |
 | 4 | `name_validate` | manual_edit | Flags 1-character first/middle/last names for inline correction |
 | 5 | `id_dob_validate` | manual_edit | Flags invalid `ID_TYPE`/`ID_NUMBER`/DoB for inline correction |
-| 6 | `address_fix` | auto | Rule-based address/city/province/phone repair (ported from `pah3.py`) |
-| 7 | `mobile_fill` | manual_edit | Flags accounts with no phone number for inline entry |
-| 8 | `cms_integration` | upload | Upload a CMS export; merges `CARD_NUMBER`/`ACCOUNT_TYPE`/`CARD_TYPE`/`CARD_PROGRAM`/`CARD_STATUS`. Skippable; also shows a disabled "Invoke via API (coming soon)" placeholder |
-| 9 | `send_email` | email | Stub checkpoint: download the in-progress dataset to share manually; "Continue" just advances (no real send yet). Skippable |
-| 10 | `final_id_check` | manual_edit | Last pass on any still-invalid IDs |
-| 11 | `default_id` | confirm | Assigns a random 8-digit ID (`00######`) + `Civil Id` type to whatever is still invalid |
-| 12 | `done` | done | Final dataset ready to download |
+| 6 | `mobile_fill` | manual_edit | Flags accounts with no phone number (blank, `XXX_NOT_COLLECTED_XXX`, or all-zero) for inline entry |
+| 7 | `cms_integration` | upload | Upload a CMS export; merges `CARD_NUMBER`/`ACCOUNT_TYPE`/`CARD_TYPE`/`CARD_PROGRAM`/`CARD_STATUS`. Skippable; also shows a disabled "Invoke via API (coming soon)" placeholder |
+| 8 | `send_email` | email | Stub checkpoint: download the in-progress dataset to share manually; "Continue" just advances (no real send yet). Skippable |
+| 9 | `final_id_check` | manual_edit | Last pass on any still-invalid IDs |
+| 10 | `default_id` | confirm | Assigns a random 8-digit ID (`00######`) + `Civil Id` type to whatever is still invalid |
+| 11 | `done` | done | Final dataset ready to download |
 
 `manual_edit` stages page 200 flagged rows at a time; submitting a batch
 re-validates and either loads the next batch or advances. Every manual stage
@@ -143,8 +142,8 @@ a background thread. Poll `/progress` until it stops reporting
 | `GET /jobs/{id}/download` | Download the final dataset as `{job_id}.xlsx` once the job reaches `done` |
 
 Both the `send_email` and final `.xlsx` downloads are one workbook split
-into a separate named sheet per pipeline-stage topic (`Name Validation`,
-`ID & DoB Validation`, `Address & Contact Auto-Fix`, `Missing Mobile
+into a separate named sheet per topic (`Name Validation`,
+`ID & DoB Validation`, `Address & Contact`, `Missing Mobile
 Numbers`, `CMS Data Integration`, `Final ID Validation`), each keyed by
 `ACCOUNT_NUMBER`, rather than one flat sheet with every column — see
 `_write_stage_sheets_xlsx` / `_EXPORT_SHEET_COLUMNS` in `app/helpers.py`.

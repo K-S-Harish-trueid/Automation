@@ -16,12 +16,12 @@ to hit a specific rule:
 | 9000008 | Blank DoB → `id_dob_validate` |
 | 9000009 | DoB under 18 → `id_dob_validate` |
 | 9000010 | Default bad date (1900) → `id_dob_validate` |
-| 9000011 | Invalid address, Baghdad province → auto-repaired by `address_fix` (province map) |
-| 9000012 | City `00000` + invalid address → auto-repaired (case A) |
-| 9000013 | Province "Outside the country" + invalid address → auto-repaired to Baghdad |
-| 9000014 | City `00000` + valid address → auto-repaired (case C, address kept) |
-| 9000015 | Blank phone → `NOT_COLLECTED` → `mobile_fill` |
-| 9000016 | All-zero phone → `NOT_COLLECTED` → `mobile_fill` |
+| 9000011 | Invalid address, Baghdad province (no longer auto-repaired — the `address_fix` stage was removed) |
+| 9000012 | City `00000` + invalid address (no longer auto-repaired) |
+| 9000013 | Province "Outside the country" + invalid address (no longer auto-repaired) |
+| 9000014 | City `00000` + valid address (no longer auto-repaired) |
+| 9000015 | Blank phone → `mobile_fill` |
+| 9000016 | All-zero phone → `mobile_fill` |
 | 9000017 | Overwritten by `dummy_replace_reference.xlsx` (name/address/ID all replaced) |
 | 9000018 | Matched by `dummy_cms_export.csv` |
 | 9000019 | Fully valid (Civil Id); also matched by `dummy_cms_export.csv` |

@@ -68,7 +68,7 @@ def validation_reasons_mobile(df: pd.DataFrame) -> dict[int, list[str]]:
     return _reasons_by_row(
         df,
         mask_mobile_missing(df),
-        [(mask_mobile_missing(df), "Phone number is missing.")],
+        [(mask_mobile_missing(df), "Phone number is missing or not a valid number.")],
     )
 
 

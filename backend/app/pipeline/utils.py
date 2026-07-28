@@ -1,5 +1,3 @@
-import random
-
 import pandas as pd
 
 from .constants import PLACEHOLDERS
@@ -15,22 +13,6 @@ def series_available(s: pd.Series) -> pd.Series:
     ss = s.astype(str).str.strip()
     ll = ss.str.lower()
     return (~ss.eq("")) & (~ll.isin(PLACEHOLDERS))
-
-
-def balanced_assign(n_rows: int, options: list, seed: int = 42) -> list:
-    if n_rows <= 0:
-        return []
-    clean_options = [o for o in options if isinstance(o, str) and o.strip() != ""]
-    if not clean_options:
-        return [""] * n_rows
-    base = n_rows // len(clean_options)
-    rem = n_rows % len(clean_options)
-    assigned = []
-    for opt in clean_options:
-        assigned.extend([opt] * base)
-    assigned.extend(clean_options[:rem])
-    random.Random(seed).shuffle(assigned)
-    return assigned
 
 
 def parse_dob_series(values: pd.Series) -> pd.Series:

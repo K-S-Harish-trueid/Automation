@@ -36,20 +36,6 @@ def _advance_with_progress(job_id: str):
             auto_labels = {
                 "clean": ("System corrected", "Line breaks were removed during initial cleaning."),
                 "reset_cms": ("System reset", "CMS fields were cleared before CMS integration."),
-                "address_fix": (
-                    {
-                        "ACCOUNT_ADDRESS": "Substituted",
-                        "ADDRESS_CITY": "Substituted",
-                        "ADDRESS_PROVINCE": "Substituted",
-                        "PHONE_NUMBER": "System corrected",
-                    },
-                    {
-                        "ACCOUNT_ADDRESS": "Replacement address assigned by the established province rule.",
-                        "ADDRESS_CITY": "City updated by the established address rule.",
-                        "ADDRESS_PROVINCE": "Province updated by the established address rule.",
-                        "PHONE_NUMBER": "Missing phone number marked as not collected.",
-                    },
-                ),
             }
             label, reason = auto_labels.get(stage["id"], ("System corrected", "Automated pipeline update."))
             _append_audit_events(

@@ -82,7 +82,6 @@ const STAGE_SIDEBAR_ICONS = {
   reset_cms: "rotate",
   name_validate: "userCheck",
   id_dob_validate: "idCard",
-  address_fix: "mapPin",
   mobile_fill: "smartphone",
   cms_integration: "puzzle",
   send_email: "mail",
@@ -878,7 +877,6 @@ async function previewRawUpload(file) {
 }
 
 function renderStage(status, current) {
-  if (current.type === "source_reopen") return renderSourceReopenStage(current);
   if (current.type === "upload") return renderUploadStage(current);
   if (current.type === "email") return renderEmailStage(current);
   if (current.type === "confirm") return renderConfirmStage(current);
@@ -887,45 +885,6 @@ function renderStage(status, current) {
   savedDraftEdits = {};
   if (current.type === "done") return renderDone(current);
   setCard(`<p class="muted"><span class="mini-spinner"></span>Processing…</p>`);
-}
-
-function renderSourceReopenStage(current) {
-  setCard(`
-    <div class="stage-intro">
-      <span class="stage-kicker">Reopened stage</span>
-      <h2>${escapeHtml(current.title)}</h2>
-      <p class="muted">Use the restored source or replace it with a corrected raw K2 export before the pipeline runs again.</p>
-    </div>
-    <div class="upload-workbench upload-workbench-reopen">
-      <dl class="upload-guidance upload-guidance-left">
-        ${detailGuidanceCard("cleanup", "Action required", "Replace the source file or continue with the restored version.")}
-        ${detailGuidanceCard("source", "Source state", "The original raw export has been restored from the checkpoint.")}
-      </dl>
-      <div class="upload-source-picker">
-        ${filePickerMarkup("reopenSourceInput", "reopenSourceZone", "reopenSourceName", "Select corrected raw export", "CSV, XLSX, or XLS")}
-      </div>
-      <dl class="upload-guidance upload-guidance-right">
-        ${detailGuidanceCard("pipeline", "Pipeline state", "All stages after this point will be re-executed with the new or restored source.")}
-        ${detailGuidanceCard("rollback", "Rollback scope", "Only data from this stage onwards is affected.")}
-      </dl>
-    </div>
-    <div class="upload-preview" id="rawUploadPreview" aria-live="polite"></div>
-    <div class="row-actions">
-      <button class="secondary" id="resumeSourceBtn">${iconMarkup("play")}<span>Continue with restored source</span></button>
-      <button id="replaceSourceBtn">${iconMarkup("upload")}<span>Replace source and rerun</span></button>
-    </div>
-  `);
-  wireFilePicker("reopenSourceInput", "reopenSourceZone", "reopenSourceName", previewRawUpload);
-  document.getElementById("resumeSourceBtn").onclick = () => {
-    runAction(`/jobs/${jobId}/resume-source`, { method: "POST" }, "Restarting from the initial source...");
-  };
-  document.getElementById("replaceSourceBtn").onclick = () => {
-    const file = document.getElementById("reopenSourceInput").files[0];
-    if (!file) { toast("Choose a corrected raw export first", "error"); return; }
-    const form = new FormData();
-    form.append("file", file);
-    runAction(`/jobs/${jobId}/source`, { method: "POST", body: form }, "Replacing source and restarting...");
-  };
 }
 
 function renderUploadStage(current) {
@@ -1061,7 +1020,6 @@ function renderDone(current) {
         <span><b>Invalid DOBs remaining</b>${(quality.invalid_dobs_remaining || 0).toLocaleString()}</span>
         <span><b>Missing phones remaining</b>${(quality.missing_phones_remaining || 0).toLocaleString()}</span>
         <span><b>Generated IDs assigned</b>${(quality.generated_ids_assigned || 0).toLocaleString()}</span>
-        <span><b>Substituted addresses</b>${(quality.substituted_addresses || 0).toLocaleString()}</span>
         <span><b>CMS matches</b>${(quality.cms_matches || 0).toLocaleString()}</span>
         <span><b>CMS unmatched</b>${(quality.cms_unmatched || 0).toLocaleString()}</span>
       </div>

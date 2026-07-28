@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 
 from .. import pipeline, store
 from ..background import _run_in_background
-from ..helpers import _current_stage, _public_job_status, _require_job, _write_stage_sheets_xlsx
+from ..helpers import _autofit_worksheet, _current_stage, _public_job_status, _require_job, _write_stage_sheets_xlsx
 
 router = APIRouter()
 
@@ -15,11 +15,8 @@ async def create_job(file: UploadFile = File(...)):
     raw = await file.read()
     try:
         job_id = store.create_job(raw, file.filename)
-        store.create_checkpoint(job_id, "Initial imported data", pipeline.STAGES[0]["id"])
     except ValueError as e:
         raise HTTPException(400, str(e))
-    except OSError as e:
-        raise HTTPException(500, f"The backend could not write the initial rollback checkpoint: {e}") from e
 
     store.try_begin_processing(job_id)
     store.set_progress(
@@ -49,7 +46,7 @@ async def import_job_backup(file: UploadFile = File(...)):
 
     status = store.get_status(job_id)
     stage = _current_stage(status)
-    if stage is not None and stage["type"] == "auto" and not status.get("source_reopen_requested"):
+    if stage is not None and stage["type"] == "auto":
         store.try_begin_processing(job_id)
         store.set_progress(
             job_id, status="processing", current_step_index=status["stage_index"],
@@ -120,5 +117,7 @@ def download_audit(job_id: str):
     ]
     audit_df = pd.DataFrame(events, columns=columns)
     out_path = store.JOBS_DIR / job_id / "K2_Data_Audit.xlsx"
-    audit_df.to_excel(out_path, index=False)
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        audit_df.to_excel(writer, sheet_name="Sheet1", index=False)
+        _autofit_worksheet(writer.sheets["Sheet1"], audit_df)
     return FileResponse(out_path, filename="K2_Data_Audit.xlsx")

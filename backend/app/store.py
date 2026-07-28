@@ -363,7 +363,6 @@ def import_job_backup(raw: bytes, filename: str) -> str:
         "history": imported_status.get("history") if isinstance(imported_status.get("history"), list) else [],
         "audit": imported_status.get("audit") if isinstance(imported_status.get("audit"), list) else [],
         "drafts": imported_status.get("drafts") if isinstance(imported_status.get("drafts"), dict) else {},
-        "source_reopen_requested": bool(imported_status.get("source_reopen_requested")),
         "checkpoints": [],
     }
     _JOBS[job_id] = {"df": df.reset_index(drop=True), "status": status}

@@ -12,6 +12,7 @@ from .. import pipeline, store
 from ..background import _run_in_background
 from ..helpers import (
     _append_audit_events,
+    _autofit_worksheet,
     _current_stage,
     _quality_summary,
     _require_job,
@@ -47,14 +48,6 @@ def current_stage_detail(job_id: str, page: int = 1):
             "quality_summary": _quality_summary(df, status),
             "audit_event_count": len(status.get("audit", [])),
             "audit_preview": status.get("audit", [])[-30:],
-        }
-
-    if stage["id"] == "clean" and status.get("source_reopen_requested"):
-        return {
-            "type": "source_reopen",
-            "stage_id": stage["id"],
-            "title": stage["title"],
-            "label": "Corrected raw K2 export",
         }
 
     if stage["type"] == "upload":
@@ -284,7 +277,7 @@ def download_email_snapshot(job_id: str):
 
     df = store.get_df(job_id)
     out_path = store.JOBS_DIR / job_id / "email_snapshot.xlsx"
-    _write_stage_sheets_xlsx(df, out_path)
+    _write_stage_sheets_xlsx(df, out_path, include_validation_notes=True)
     return FileResponse(out_path, filename=f"{job_id}.xlsx")
 
 
@@ -342,11 +335,14 @@ def download_workbook(job_id: str):
             flagged.insert(0, "row_key", flagged.index)
             reasons = cfg["reasons"](df)
             flagged["validation_notes"] = [", ".join(reasons.get(int(k), [])) for k in flagged["row_key"]]
-            flagged.to_excel(writer, sheet_name=stage["title"], index=False)
+            sheet_name = stage["title"][:31]
+            flagged.to_excel(writer, sheet_name=sheet_name, index=False)
+            _autofit_worksheet(writer.sheets[sheet_name], flagged)
         if cms_reached:
             cms_sheet = df[["ACCOUNT_NUMBER", *pipeline.CMS_SHEET_COLS]].copy()
             cms_sheet.insert(0, "row_key", cms_sheet.index)
             cms_sheet.to_excel(writer, sheet_name="CMS Data Integration", index=False)
+            _autofit_worksheet(writer.sheets["CMS Data Integration"], cms_sheet)
     return FileResponse(out_path, filename="K2_Manual_Review.xlsx")
 
 

@@ -10,20 +10,16 @@ public surface so callers keep doing `from . import pipeline` and
 `pipeline.STAGES`, `pipeline.mask_name_invalid(...)`, etc. unchanged.
 """
 from .constants import (
-    BAGHDAD_ADDRESS_POOL,
     CMS_SHEET_COLS,
     CMS_UPDATE_COLS,
-    INVALID_ADDRESSES,
     NOT_COLLECTED,
     PLACEHOLDERS,
-    PROVINCE_ADDRESS_MAP,
     RAW_REQUIRED_COLS,
     REPLACE_MAPPING_COLS,
 )
-from .utils import _s, balanced_assign, parse_dob_series, series_available
+from .utils import _s, parse_dob_series, series_available
 from .auto_stages import (
     default_id_invalid_mask,
-    stage_address_fix,
     stage_clean_linebreaks,
     stage_default_id_assign,
     stage_reset_cms_fields,
@@ -61,10 +57,10 @@ from .registry import (
 )
 
 __all__ = [
-    "NOT_COLLECTED", "PLACEHOLDERS", "INVALID_ADDRESSES", "BAGHDAD_ADDRESS_POOL",
-    "PROVINCE_ADDRESS_MAP", "REPLACE_MAPPING_COLS", "CMS_UPDATE_COLS", "CMS_SHEET_COLS", "RAW_REQUIRED_COLS",
-    "_s", "series_available", "balanced_assign", "parse_dob_series",
-    "stage_clean_linebreaks", "stage_reset_cms_fields", "stage_address_fix",
+    "NOT_COLLECTED", "PLACEHOLDERS",
+    "REPLACE_MAPPING_COLS", "CMS_UPDATE_COLS", "CMS_SHEET_COLS", "RAW_REQUIRED_COLS",
+    "_s", "series_available", "parse_dob_series",
+    "stage_clean_linebreaks", "stage_reset_cms_fields",
     "default_id_invalid_mask", "stage_default_id_assign",
     "validate_replace_reference_inputs", "validate_cms_reference_inputs", "validate_upload_inputs",
     "stage_replace_reference", "stage_cms_integration",

@@ -63,4 +63,5 @@ def mask_id_only_invalid(df: pd.DataFrame) -> pd.Series:
 
 
 def mask_mobile_missing(df: pd.DataFrame) -> pd.Series:
-    return _s(df, "PHONE_NUMBER").eq(NOT_COLLECTED) | _s(df, "PHONE_NUMBER").eq("")
+    phone = _s(df, "PHONE_NUMBER")
+    return phone.eq(NOT_COLLECTED) | phone.eq("") | phone.str.fullmatch(r"0+", na=False)

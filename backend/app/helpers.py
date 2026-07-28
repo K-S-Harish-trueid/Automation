@@ -2,9 +2,19 @@ from datetime import datetime, timezone
 
 import pandas as pd
 from fastapi import HTTPException
+from openpyxl.utils import get_column_letter
 
 from . import pipeline, store
 from .schemas import EditItem
+
+
+def _autofit_worksheet(worksheet, df: pd.DataFrame, *, min_width: int = 8, max_width: int = 60) -> None:
+    """Size each column to its content instead of Excel's default fixed
+    width, so a downloaded sheet doesn't need a manual column-resize pass."""
+    for i, col in enumerate(df.columns, start=1):
+        content_width = df[col].astype(str).map(len).max() if len(df) else 0
+        width = max(len(str(col)), int(content_width), min_width) + 2
+        worksheet.column_dimensions[get_column_letter(i)].width = min(width, max_width)
 
 
 def _current_stage(status: dict) -> dict | None:
@@ -96,7 +106,6 @@ def _quality_summary(df: pd.DataFrame, status: dict) -> dict:
                            if event.get("stage") == "name_validate" and event.get("label") == "Operator corrected"})
     generated_ids = len({event["row_key"] for event in audit
                          if event.get("stage") == "default_id" and event.get("field") == "ID_NUMBER"})
-    substitutions = len({event["row_key"] for event in audit if event.get("label") == "Substituted"})
     operator_corrections = len({(event["row_key"], event["field"]) for event in audit
                                 if event.get("label") == "Operator corrected"})
     cms = _history_metrics(status, "cms_integration")
@@ -111,7 +120,6 @@ def _quality_summary(df: pd.DataFrame, status: dict) -> dict:
         "total_rows": int(len(df)),
         "names_corrected": names_corrected,
         "generated_ids_assigned": generated_ids,
-        "substituted_addresses": substitutions,
         "operator_corrections": operator_corrections,
         "cms_matches": int(cms.get("matched_rows", 0)),
         "cms_unmatched": int(cms.get("unmatched_rows", 0)),
@@ -134,27 +142,62 @@ def _validate_edit_items(df: pd.DataFrame, cfg: dict, edits: list[EditItem]):
 _EXPORT_SHEET_COLUMNS = [
     ("name_validate", ["ACCOUNT_FIRST_NAME", "ACCOUNT_MIDDLE_NAME", "ACCOUNT_LAST_NAME"]),
     ("id_dob_validate", ["ID_TYPE", "ID_NUMBER", "ACCOUNT_HOLDER_DOB"]),
-    ("address_fix", ["ACCOUNT_ADDRESS", "ADDRESS_CITY", "ADDRESS_PROVINCE", "ADDRESS_COUNTRY", "POSTAL_CODE"]),
+    # Not a pipeline stage (the auto-fix step was removed) -- this key isn't a
+    # stage id, so the title lookup below falls back to using it as-is.
+    ("Address & Contact", ["ACCOUNT_ADDRESS", "ADDRESS_CITY", "ADDRESS_PROVINCE", "ADDRESS_COUNTRY", "POSTAL_CODE"]),
     ("mobile_fill", ["PHONE_NUMBER"]),
     ("cms_integration", ["CARD_NUMBER", "ACCOUNT_TYPE", "CARD_TYPE", "CARD_PROGRAM", "CARD_STATUS"]),
     ("final_id_check", ["ID_TYPE", "ID_NUMBER"]),
 ]
 
 
-def _write_stage_sheets_xlsx(df: pd.DataFrame, out_path) -> None:
+def _validation_notes_column(df: pd.DataFrame, stage_id: str) -> pd.Series | None:
+    """Per-row 'why is this flagged' text for sheets that map to a manual_edit
+    stage's validator/reasons pair; None for sheets with no such rule (e.g.
+    Address & Contact, CMS Data Integration)."""
+    cfg = pipeline.MANUAL_STAGES.get(stage_id)
+    if not cfg:
+        return None
+    reasons = cfg["reasons"](df)
+    return pd.Series(
+        [", ".join(reasons.get(int(row_key), [])) for row_key in df.index],
+        index=df.index,
+    )
+
+
+def _write_stage_sheets_xlsx(df: pd.DataFrame, out_path, *, include_validation_notes: bool = False) -> None:
     """Write the current dataset as one workbook with a separate named sheet
-    per pipeline-stage topic (Name Validation, ID & DoB, Address, Mobile,
-    CMS Data Integration...), each keyed by ACCOUNT_NUMBER -- used for the
-    final download and the Send Email checkpoint download, instead of
-    dumping everything onto one flat sheet."""
+    per pipeline-stage topic (Name Validation, ID & DoB, Mobile, CMS Data
+    Integration...), each keyed by ACCOUNT_NUMBER -- used for the final
+    download and the Send Email checkpoint download, instead of dumping
+    everything onto one flat sheet.
+
+    include_validation_notes switches this from the full final-output export
+    to the Send Email reviewer handoff: manual-edit stages (name, ID/DoB,
+    mobile, final ID) are cut down to only their flagged rows and get a
+    'validation_notes' column explaining why, since manual-edit stages are
+    bypassed and an outside reviewer needs to know what to fix without the
+    tool's UI. Sheets that never needed manual review (Address & Contact --
+    the auto-fix step that used to own it was removed) are dropped entirely.
+    CMS Data Integration is the one exception: it's a merge report, not a
+    validation gate, so it keeps every row, unfiltered, with no notes
+    column."""
     titles = {s["id"]: s["title"] for s in pipeline.STAGES}
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         for stage_id, cols in _EXPORT_SHEET_COLUMNS:
+            cfg = pipeline.MANUAL_STAGES.get(stage_id)
+            if include_validation_notes and cfg is None and stage_id != "cms_integration":
+                continue
             available = [c for c in cols if c in df.columns]
             if not available:
                 continue
-            sheet = df[["ACCOUNT_NUMBER", *available]].copy()
-            sheet.to_excel(writer, sheet_name=titles.get(stage_id, stage_id)[:31], index=False)
+            sheet_df = df.loc[cfg["validator"](df)] if include_validation_notes and cfg else df
+            sheet = sheet_df[["ACCOUNT_NUMBER", *available]].copy()
+            if include_validation_notes and cfg:
+                sheet["validation_notes"] = _validation_notes_column(sheet_df, stage_id).values
+            sheet_name = titles.get(stage_id, stage_id)[:31]
+            sheet.to_excel(writer, sheet_name=sheet_name, index=False)
+            _autofit_worksheet(writer.sheets[sheet_name], sheet)
 
 
 def _upload_metrics(df: pd.DataFrame, ref_df: pd.DataFrame) -> dict:
