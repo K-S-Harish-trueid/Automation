@@ -14,3 +14,7 @@ class SubmitRequest(BaseModel):
 
 class DraftRequest(BaseModel):
     edits: list[EditItem] = []
+
+
+class StageTestRequest(BaseModel):
+    fields: dict[str, str] = {}

@@ -191,6 +191,50 @@ shape as the original raw import — see `_write_flat_xlsx`.
 Calling an action endpoint again while a job is already processing gets a
 `409 Conflict` instead of starting a second run.
 
+## Stage Tester (hidden page — not linked in the app)
+
+`GET /test` (note: **`/test`, not `/test.html`**) serves a small standalone
+page for trying a single stage's rule against typed-in values, without
+creating a real job. Two panels: left is the stage picker + input fields +
+Run Check/Clear, right is a condensed "Rules followed" summary for whichever
+stage is selected (from `_RULES_PANELS` in `app/routes/stage_test.py` —
+kept in sync with `rules/NN-*.txt` by hand, same discipline as
+`registry.py`'s `instructions` text). A full-width Result panel at the
+bottom shows FLAGGED/PASSED plus the exact reason message a real operator
+would see; for `address_fix` it also shows a before/after table, since that
+stage rewrites the value instead of just flagging it. Each stage also gets
+two one-click "fill example" buttons (a flagged case and a passing case) so
+you don't have to hand-type test values every time.
+
+Colors are borrowed from the main app's `style.css` tokens (`--canvas`,
+`--accent`, etc., hardcoded here rather than importing the stylesheet) so it
+doesn't look thrown-together, but it deliberately does NOT reuse the main
+sidebar/layout or `app.js` — see "Deliberately kept out of sight" below for
+why looking distinct from a real job screen matters here.
+
+It's a thin wrapper around the real per-stage `mask_*`/`reasons` functions
+in `app/pipeline/stages/` — it runs your one test row through the actual
+pipeline code and throws the row away, so there's no separate "test" logic
+to keep in sync with the real rules (the Rules-followed panel text is the
+one exception — that's hand-written prose, not derived from code, so it can
+drift if a rule changes and this doesn't get updated alongside it).
+
+Testable stages: `name_validate`, `id_dob_validate`, `address_fix`,
+`mobile_fill`, `final_id_check` (the ones with a per-row rule to try — auto
+whole-dataset stages like `clean`/`reset_cms` and upload-merge stages like
+`replace`/`cms_integration` aren't testable this way, there's nothing
+single-row about them).
+
+Deliberately kept out of sight on purpose, not by accident:
+- Not linked anywhere in the main app UI.
+- Not served as a static file (`app/templates/stage_test.html`, outside
+  `frontend/`, read directly by the `/test` route — so `/test.html` 404s).
+- `include_in_schema=False` on the page route and its two `/api/stage-test/*`
+  endpoints, so it doesn't show up in `/docs` either.
+- No login, though — same as every other endpoint here, it's reachable by
+  anyone who can reach the port. It's hidden from casual discovery, not
+  access-controlled. See the security note at the top of this file.
+
 ## Job retention
 
 This pipeline handles KYC PII, so finished jobs don't stick around: at most
