@@ -6,3 +6,4 @@ __pycache__/
 graphify-out/
 .claude/
 aman/
+llms/data/

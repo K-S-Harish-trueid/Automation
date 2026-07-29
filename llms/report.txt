@@ -1,0 +1,9 @@
+Address Validation Report - 2026-07-29 11:25:07
+Model: command-r7b-arabic
+Input file: llms/K2_DATA_PAH_20260422_address.xlsx
+Output file: llms/address_validation_results.xlsx
+Total rows in input file: 65473
+Rows processed (sent to model): 10
+Valid: 8
+Invalid: 2
+Unknown/unparsed: 0
