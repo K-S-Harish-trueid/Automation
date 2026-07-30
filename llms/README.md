@@ -2,6 +2,27 @@
 
 Local text-generation models running via [Ollama](https://ollama.com), used for fast, offline/on-prem inference — including Arabic-language processing.
 
+## Speed requirement (hard constraint)
+
+The target workload is ~10,000 records (e.g. address validation). For that to be practical:
+
+- **Target: 2–5 seconds per record.**
+- **Hard max: 10 seconds per record.**
+- Anything slower than that turns a 10,000-record batch into multiple hours, which is not acceptable.
+
+This is more important than raw quality when picking a model — a model that's a little less accurate but consistently fast is preferable to one that's occasionally brilliant but spikes to 100–500s/record.
+
+### Benchmark results so far (address-validation task, 10 sample rows)
+
+| Model | Avg time/row | Verdict on speed |
+|---|---|---|
+| `qwen3:1.7b` | ~8.4s (mostly 6–13s) | Close to the limit, borderline pass |
+| `command-r7b-arabic` | highly erratic: 2–11s normal, but spiked to 54s/65s/537s on some rows | **Fails** — unusable at scale due to unpredictable spikes |
+| `qwen3:4b` | ~135s avg on the rows tested (135s, 68s, 136s, 200s) | **Fails badly** — run was stopped before completion, far outside budget |
+| `gemma3:4b` | not benchmarked yet | — |
+
+The erratic spikes look like system resource contention (CPU/GPU load) rather than pure model-size effects, but until proven otherwise, treat any model that isn't consistently under ~10s/row as disqualified. Re-run `python llms/benchmark_models.py` (it skips models already benchmarked — see `llms/data/benchmark_*.xlsx`) to pick up where it left off, ideally when the machine isn't under other load, to get a cleaner read before ruling models out for good.
+
 ## Prerequisites
 
 - **Ollama** — already installed on this machine (`ollama version 0.32.5`). No reinstall needed.

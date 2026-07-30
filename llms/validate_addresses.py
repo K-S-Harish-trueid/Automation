@@ -56,7 +56,7 @@ def autofit_columns(path: str):
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
 
-    df = pd.read_excel(INPUT_FILE)
+    df = pd.read_excel(INPUT_FILE, engine="calamine")
     total_input_rows = len(df)
     sample = df["ACCOUNT_ADDRESS"].head(NUM_ROWS)
 

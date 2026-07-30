@@ -1,4 +1,4 @@
-"""Job lifecycle: create/import, listing, progress, backup export, final/audit downloads."""
+"""Job lifecycle: create, listing, progress, final/audit downloads."""
 import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -36,34 +36,9 @@ async def raw_upload_preview(file: UploadFile = File(...)):
         raise HTTPException(400, str(e))
 
 
-@router.post("/api/jobs/import")
-async def import_job_backup(file: UploadFile = File(...)):
-    raw = await file.read()
-    try:
-        job_id = store.import_job_backup(raw, file.filename)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-    status = store.get_status(job_id)
-    stage = _current_stage(status)
-    if stage is not None and stage["type"] == "auto":
-        store.try_begin_processing(job_id)
-        store.set_progress(
-            job_id, status="processing", current_step_index=status["stage_index"],
-            total_steps=len(status["stages"]), current_step_name=stage["title"],
-            percent=round(status["stage_index"] / len(status["stages"]) * 100),
-        )
-        _run_in_background(job_id, resolve_gate=lambda: None)
-        return {"job_id": job_id, "status": "processing"}
-
-    progress_status = "done" if stage is not None and stage["type"] == "done" else "idle"
-    store.set_progress(job_id, status=progress_status)
-    return {"job_id": job_id, "status": progress_status}
-
-
 @router.get("/api/jobs")
-def list_jobs():
-    return {"jobs": store.list_job_summaries()}
+def list_jobs(stage_id: str | None = None):
+    return {"jobs": store.list_job_summaries(stage_id)}
 
 
 @router.get("/api/jobs/{job_id}")
@@ -75,15 +50,6 @@ def job_status(job_id: str):
 def job_progress(job_id: str):
     _require_job(job_id)
     return store.get_progress(job_id)
-
-
-@router.get("/api/jobs/{job_id}/export")
-def export_job_backup(job_id: str):
-    _require_job(job_id)
-    if store.is_processing(job_id):
-        raise HTTPException(409, "Wait for the current processing step before exporting a backup")
-    out_path = store.export_job_backup(job_id)
-    return FileResponse(out_path, filename="K2_Job_Backup.zip")
 
 
 @router.get("/api/jobs/{job_id}/download")

@@ -7,3 +7,7 @@ graphify-out/
 .claude/
 aman/
 llms/data/
+.vscode/
+TODO
+Current Run/
+dummy_data/Historical_Dataset.xlsx

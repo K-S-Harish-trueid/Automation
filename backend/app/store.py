@@ -9,13 +9,23 @@ import uuid
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 import pyarrow.parquet as pq
 
 JOBS_DIR = Path(__file__).resolve().parent.parent / "jobs"
-JOBS_DIR.mkdir(exist_ok=True)
+
+
+def _ensure_jobs_dir():
+    """JOBS_DIR is normally created once at import time (below), but if the
+    whole folder gets deleted while the server process is still running,
+    every function that scans it directly (_next_job_id, list_job_summaries,
+    _stored_job_records, enforce_job_retention) needs to recreate it first or
+    JOBS_DIR.iterdir() raises FileNotFoundError."""
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+_ensure_jobs_dir()
 
 def _positive_limit_from_env(name: str, default: int) -> int:
     try:
@@ -49,6 +59,7 @@ _ID_LOCK = threading.Lock()
 def _next_job_id() -> str:
     today = datetime.now().strftime("%Y%m%d")
     prefix = today + "_"
+    _ensure_jobs_dir()
     with _ID_LOCK:
         used = {d.name for d in JOBS_DIR.iterdir() if d.is_dir() and d.name.startswith(prefix)}
         used |= {j for j in _JOBS if j.startswith(prefix)}
@@ -86,7 +97,11 @@ def get_progress(job_id: str) -> dict:
 
 def _job_dir(job_id: str) -> Path:
     d = JOBS_DIR / job_id
-    d.mkdir(exist_ok=True)
+    # parents=True: JOBS_DIR itself is only created once, at import time
+    # (line 18) -- if the whole jobs/ folder gets deleted while the server
+    # process is still running, a plain mkdir(exist_ok=True) here would
+    # raise FileNotFoundError since its parent no longer exists.
+    d.mkdir(parents=True, exist_ok=True)
     return d
 
 
@@ -109,7 +124,7 @@ def read_table(raw: bytes, filename: str) -> pd.DataFrame:
             raise ValueError(f"Could not decode {filename}: {last_err}")
     elif name.endswith((".xlsx", ".xls")):
         try:
-            df = pd.read_excel(io.BytesIO(raw), dtype=str).fillna("")
+            df = pd.read_excel(io.BytesIO(raw), dtype=str, engine="calamine").fillna("")
         except Exception as e:
             raise ValueError(f"Could not read Excel file {filename}: {e}") from e
     else:
@@ -300,77 +315,6 @@ def rollback_latest_checkpoint(job_id: str) -> dict:
     return rollback_to_checkpoint(job_id, checkpoints[-1]["id"])
 
 
-def export_job_backup(job_id: str) -> Path:
-    """Create a portable archive of the current job state, without old checkpoints."""
-    _ensure_loaded(job_id)
-    persist(job_id)
-    job_dir = _job_dir(job_id)
-    out_path = job_dir / f"K2_Job_Backup_{job_id}.zip"
-    with ZipFile(out_path, "w", compression=ZIP_DEFLATED) as archive:
-        archive.write(job_dir / "working.parquet", "working.parquet")
-        archive.write(job_dir / "status.json", "status.json")
-    return out_path
-
-
-def import_job_backup(raw: bytes, filename: str) -> str:
-    """Restore a portable job backup into a new local job ID."""
-    try:
-        with ZipFile(io.BytesIO(raw)) as archive:
-            names = set(archive.namelist())
-            required = {"working.parquet", "status.json"}
-            if not required.issubset(names):
-                raise ValueError("Backup must contain working.parquet and status.json")
-            status_raw = archive.read("status.json")
-            data_raw = archive.read("working.parquet")
-    except BadZipFile as e:
-        raise ValueError("The selected file is not a valid K2 job backup ZIP") from e
-    except KeyError as e:
-        raise ValueError("The selected backup is missing required K2 job files") from e
-
-    try:
-        imported_status = json.loads(status_raw.decode("utf-8"))
-        df = pd.read_parquet(io.BytesIO(data_raw))
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, OSError) as e:
-        raise ValueError("The K2 job backup could not be read") from e
-
-    from .pipeline import RAW_REQUIRED_COLS, STAGES
-
-    missing = [column for column in RAW_REQUIRED_COLS if column not in df.columns]
-    if missing:
-        raise ValueError(f"Imported backup is missing required columns: {missing}")
-    imported_stages = imported_status.get("stages")
-    if not isinstance(imported_stages, list) or [s.get("id") for s in imported_stages] != [s["id"] for s in STAGES]:
-        raise ValueError("This backup was created by an incompatible K2 pipeline version")
-    stage_index = imported_status.get("stage_index")
-    if not isinstance(stage_index, int) or not 0 <= stage_index <= len(STAGES):
-        raise ValueError("The imported backup has an invalid pipeline position")
-
-    job_id = _next_job_id()
-    valid_stage_statuses = {"pending", "current", "done"}
-    stages = []
-    for template, imported_stage in zip(STAGES, imported_stages):
-        stage_status = imported_stage.get("status", "pending")
-        if stage_status not in valid_stage_statuses:
-            raise ValueError("The imported backup has an invalid stage status")
-        stages.append({**template, "status": stage_status})
-
-    status = {
-        "job_id": job_id,
-        "filename": imported_status.get("filename") or filename or "Imported K2 job",
-        "created_at": time.time(),
-        "stage_index": stage_index,
-        "stages": stages,
-        "history": imported_status.get("history") if isinstance(imported_status.get("history"), list) else [],
-        "audit": imported_status.get("audit") if isinstance(imported_status.get("audit"), list) else [],
-        "drafts": imported_status.get("drafts") if isinstance(imported_status.get("drafts"), dict) else {},
-        "checkpoints": [],
-    }
-    _JOBS[job_id] = {"df": df.reset_index(drop=True), "status": status}
-    persist(job_id)
-    enforce_job_capacity(protected_job_id=job_id)
-    return job_id
-
-
 def _ensure_loaded(job_id: str):
     if job_id in _JOBS:
         return
@@ -408,9 +352,13 @@ def delete_job(job_id: str):
     shutil.rmtree(JOBS_DIR / job_id, ignore_errors=True)
 
 
-def list_job_summaries() -> list[dict]:
+def list_job_summaries(stage_id: str | None = None) -> list[dict]:
     """Cheap per-job overview for the dashboard: reads status.json (small) and
-    only Parquet metadata (not the full dataframe) for row counts."""
+    only Parquet metadata (not the full dataframe) for row counts. Pass
+    `stage_id` to only return jobs currently parked at that stage (used by
+    the Flow 2/3 intake pages' job pickers) -- default (None) keeps the
+    unfiltered dashboard listing."""
+    _ensure_jobs_dir()
     summaries = []
     for job_dir in JOBS_DIR.iterdir():
         if not job_dir.is_dir():
@@ -425,6 +373,8 @@ def list_job_summaries() -> list[dict]:
         stage_index = status.get("stage_index", 0)
         stages = status.get("stages", [])
         stage = stages[stage_index] if isinstance(stage_index, int) and 0 <= stage_index < len(stages) else None
+        if stage_id is not None and (stage is None or stage.get("id") != stage_id):
+            continue
         row_count = None
         parquet_path = job_dir / "working.parquet"
         if parquet_path.exists():
@@ -436,6 +386,7 @@ def list_job_summaries() -> list[dict]:
             "job_id": job_dir.name,
             "filename": status.get("filename", ""),
             "created_at": status.get("created_at"),
+            "stage_id": stage["id"] if stage else "done",
             "stage_title": stage["title"] if stage else "Final Output",
             "stage_index": stage_index,
             "total_stages": len(stages),
@@ -448,6 +399,7 @@ def list_job_summaries() -> list[dict]:
 
 
 def _stored_job_records() -> list[tuple[float, str]]:
+    _ensure_jobs_dir()
     records = []
     for job_dir in JOBS_DIR.iterdir():
         if not job_dir.is_dir():
@@ -488,6 +440,7 @@ def enforce_job_retention(max_done_jobs: int = MAX_DONE_JOBS):
     """Keeps at most `max_done_jobs` completed jobs on disk (and in memory),
     deleting the oldest ones first. Jobs still waiting on a manual gate are
     never counted or touched, however many of them exist."""
+    _ensure_jobs_dir()
     done = []  # (mtime, job_id)
     for d in JOBS_DIR.iterdir():
         if not d.is_dir():

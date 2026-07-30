@@ -1,9 +1,26 @@
-Address Validation Report - 2026-07-29 11:25:07
+Address Validation Report - 2026-07-29 11:48:59
 Model: command-r7b-arabic
-Input file: llms/K2_DATA_PAH_20260422_address.xlsx
-Output file: llms/address_validation_results.xlsx
+Input file: llms/data/K2_DATA_PAH_20260422_address.xlsx
+Output file: llms/data/address_validation_results.xlsx
 Total rows in input file: 65473
 Rows processed (sent to model): 10
 Valid: 8
 Invalid: 2
 Unknown/unparsed: 0
+
+Timing:
+  Total time: 684.03s
+  Average per row: 68.40s
+  Fastest row: #2 (2.39s)
+  Slowest row: #7 (537.05s)
+  Per-row breakdown:
+    Row 1: 11.33s
+    Row 2: 2.39s
+    Row 3: 2.42s
+    Row 4: 3.27s
+    Row 5: 54.55s
+    Row 6: 64.62s
+    Row 7: 537.05s
+    Row 8: 2.52s
+    Row 9: 2.64s
+    Row 10: 3.25s

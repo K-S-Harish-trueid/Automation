@@ -1,12 +1,5 @@
 const API = window.K2_API_BASE || "/api";
 const POLL_MS = window.K2_POLL_INTERVAL_MS || 900;
-const RAW_REQUIRED_COLUMNS = [
-  "ACCOUNT_NUMBER", "ACCOUNT_LAST_NAME", "ACCOUNT_FIRST_NAME", "ACCOUNT_MIDDLE_NAME",
-  "DATE_OPENED", "ACCOUNT_HOLDER_DOB", "ACCOUNT_TYPE", "CARD_TYPE", "ACCOUNT_ADDRESS",
-  "ADDRESS_CITY", "ADDRESS_PROVINCE", "ADDRESS_COUNTRY", "POSTAL_CODE", "PHONE_NUMBER",
-  "EMAIL_ADDRESS", "ID_TYPE", "ID_NUMBER", "ID_COUNTRY", "NATIONALITY", "ISSUING_FI",
-  "CARD_PROGRAM", "CARD_STATUS", "SECONDARY_CARD_TYPE", "CARD_NUMBER",
-];
 
 let jobId = localStorage.getItem("k2_job_id");
 let pendingEdits = {}; // row_key -> { field: value }
@@ -34,7 +27,6 @@ const checkNowBtnEl = document.getElementById("checkNowBtn");
 const workspaceStateEl = document.getElementById("workspaceState");
 const goToDashboardBtnEl = document.getElementById("goToDashboardBtn");
 const rollbackJobBtnEl = document.getElementById("rollbackJobBtn");
-const exportJobBtnEl = document.getElementById("exportJobBtn");
 const layoutEl = document.querySelector(".layout");
 const sidebarToggleEl = document.getElementById("sidebarToggle");
 const sidebarBrandToggleEl = document.getElementById("sidebarBrandToggle");
@@ -54,7 +46,6 @@ const ICON_PATHS = {
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/>',
   database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>',
-  alertTriangle: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   filter: '<path d="M3 4h18l-7 8v6l-4 2v-8Z"/>',
   userCheck: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/>',
   idCard: '<rect width="18" height="14" x="3" y="5" rx="2"/><circle cx="9" cy="12" r="2"/><path d="M15 10h2"/><path d="M15 14h2"/><path d="M6 17c.8-1.2 1.8-2 3-2s2.2.8 3 2"/>',
@@ -84,8 +75,8 @@ const STAGE_SIDEBAR_ICONS = {
   id_dob_validate: "idCard",
   address_fix: "mapPin",
   mobile_fill: "smartphone",
-  cms_integration: "puzzle",
-  send_email: "mail",
+  flow1_dispatch: "mail",
+  flow2_dispatch: "puzzle",
   final_id_check: "shield",
 };
 
@@ -97,16 +88,8 @@ function detailIconMarkup(name, className = "detail-icon") {
   return `<img class="${className}" src="${DETAIL_ICON_ASSETS[name]}" alt="" aria-hidden="true" />`;
 }
 
-function detailGuidanceCard(asset, title, detail) {
-  return `<div class="guidance-card detail-guidance-card">
-    <span class="guidance-icon guidance-icon-art">${detailIconMarkup(asset, "guidance-detail-icon")}</span>
-    <div><dt>${title}</dt><dd>${detail}</dd></div>
-  </div>`;
-}
-
 goToDashboardBtnEl.innerHTML = `${iconMarkup("home")}<span>Dashboard</span>`;
 rollbackJobBtnEl.innerHTML = `${detailIconMarkup("rollback", "action-detail-icon")}<span>Rollback</span>`;
-exportJobBtnEl.innerHTML = `${detailIconMarkup("export", "action-detail-icon")}<span>Export backup</span>`;
 
 checkNowBtnEl.onclick = () => { forceCheckNow = true; };
 
@@ -136,10 +119,8 @@ function setSidebarJobChrome(visible) {
 function setJobContextActions(status) {
   const hasJob = Boolean(jobId && status);
   goToDashboardBtnEl.hidden = false;
-  exportJobBtnEl.hidden = false;
   rollbackJobBtnEl.hidden = false;
   goToDashboardBtnEl.disabled = !hasJob;
-  exportJobBtnEl.disabled = !hasJob;
   rollbackJobBtnEl.disabled = !status?.rollback_available;
   rollbackJobBtnEl.title = status?.rollback_available
     ? `Restore ${status.rollback_label || "the latest checkpoint"}`
@@ -166,11 +147,6 @@ sidebarBrandToggleEl.onclick = () => {
 goToDashboardBtnEl.onclick = () => {
   if (!jobId || isBusy) return;
   renderDashboard();
-};
-
-exportJobBtnEl.onclick = () => {
-  if (!jobId || isBusy) return;
-  window.location.href = `${API}/jobs/${jobId}/export`;
 };
 
 rollbackJobBtnEl.onclick = () => {
@@ -226,38 +202,9 @@ function filePickerMarkup(inputId, zoneId, fileNameId, prompt, note) {
   `;
 }
 
-function uploadFileCardMarkup(inputId, zoneId, fileNameId) {
-  return `<label class="guidance-card upload-file-card" id="${zoneId}" for="${inputId}" title="Select raw K2 export (CSV, XLSX, or XLS)">
-    <input class="file-input" type="file" id="${inputId}" accept=".csv,.xlsx,.xls" />
-    <span class="guidance-icon guidance-icon-art">${detailIconMarkup("upload", "guidance-detail-icon")}</span>
-    <span class="upload-file-copy">
-      <span class="upload-file-label">Expected file</span>
-      <span class="file-picker-trigger">Raw K2 customer export</span>
-      <span class="file-name" id="${fileNameId}" data-empty-hidden="true" hidden></span>
-    </span>
-  </label>`;
-}
-
-function uploadGuidanceCard(icon, title, detail, count, detailAsset) {
-  const countBadge = count != null ? `<span class="guidance-count">${count}</span>` : '';
-  const cardIcon = detailAsset
-    ? detailIconMarkup(detailAsset, "guidance-detail-icon")
-    : iconMarkup(icon);
-  const iconClass = detailAsset ? "guidance-icon guidance-icon-art" : "guidance-icon";
-  return `<div class="guidance-card">
-    <span class="${iconClass}">${cardIcon}</span>
-    <div><dt>${title}${countBadge}</dt><dd>${detail}</dd></div>
-  </div>`;
-}
-
 function formatFileSize(bytes) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function requiredColumnsMarkup(columns) {
-  const names = Array.isArray(columns) ? columns : [];
-  return `<details class="required-columns"><summary>Required columns (${names.length})</summary><div>${escapeHtml(names.join(", "))}</div></details>`;
 }
 
 function wireFilePicker(inputId, zoneId, fileNameId, onFileSelected) {
@@ -659,9 +606,9 @@ function renderDashboard() {
     </div>
     <div class="row-actions">
       <button id="newBatchBtn">${iconMarkup("play")}<span>Start new batch</span></button>
-      <button class="secondary" id="importJobBtn" type="button">${iconMarkup("upload")}<span>Import saved job</span></button>
+      <button class="secondary" id="flow2PageBtn" type="button">${iconMarkup("mail")}<span>Flow 2 (Naresh)</span></button>
+      <button class="secondary" id="flow3PageBtn" type="button">${iconMarkup("puzzle")}<span>Flow 3 (Haider)</span></button>
     </div>
-    <input class="file-input" type="file" id="importJobInput" accept=".zip,application/zip" />
     <div class="job-history">
       <div class="table-wrap job-history-wrap" id="jobHistoryWrap">
         <p class="muted"><span class="mini-spinner"></span>Loading job history…</p>
@@ -670,9 +617,8 @@ function renderDashboard() {
   `);
 
   document.getElementById("newBatchBtn").onclick = () => renderNewBatch();
-  const importInput = document.getElementById("importJobInput");
-  document.getElementById("importJobBtn").onclick = () => importInput.click();
-  importInput.onchange = () => importJobBackup(importInput.files[0]);
+  document.getElementById("flow2PageBtn").onclick = () => renderFlow2Page();
+  document.getElementById("flow3PageBtn").onclick = () => renderFlow3Page();
 
   loadJobHistory();
 }
@@ -688,13 +634,9 @@ function renderNewBatch() {
       <button class="secondary quiet-action back-to-dashboard" id="backToDashboardBtn" type="button">&larr; Back to dashboard</button>
       <h2>Start data preparation</h2>
     </div>
-    <div class="upload-info-grid">
-      ${uploadFileCardMarkup("fileInput", "rawFileZone", "rawFileName")}
-      ${uploadGuidanceCard("key", "Matching key", "ACCOUNT_NUMBER", null, "identity")}
-      ${uploadGuidanceCard("listChecks", "Required columns", requiredColumnsMarkup(RAW_REQUIRED_COLUMNS), RAW_REQUIRED_COLUMNS.length, "cleanup")}
-      ${uploadGuidanceCard("pencil", "Fields updated", "None at upload", null, "pipeline")}
-      ${uploadGuidanceCard("copy", "Duplicates", "Kept in the source and counted in the preview for operator review.", null, "source")}
-      ${uploadGuidanceCard("help", "Unresolved accounts", "Not applicable at the historical and CMS matching stages.", null, "customer")}
+    <div class="upload-simple-layout">
+      <p class="muted">Upload the raw K2 customer export (CSV, XLSX, or XLS) to start the pipeline. It's checked for the required columns as soon as you pick a file.</p>
+      ${filePickerMarkup("fileInput", "rawFileZone", "rawFileName", "Select raw file", "CSV, XLSX, or XLS")}
     </div>
     <div class="upload-preview" id="rawUploadPreview" aria-live="polite"></div>
     <div class="row-actions">
@@ -735,6 +677,182 @@ function renderNewBatch() {
       lockAllControls(false);
     }
   };
+}
+
+// Polls a specific job's progress without touching the global `jobId` --
+// used by the Flow 2/3 intake pages, which act on a picked job that may be
+// completely different from (or absent from) the currently loaded job, so
+// they must not disturb it or its localStorage entry while the upload is
+// still processing.
+async function pollJobProgress(targetJobId) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt <= MAX_POLL_WAIT_MS) {
+    let progress;
+    try {
+      progress = await api(`/jobs/${targetJobId}/progress`);
+    } catch (e) {
+      return;
+    }
+    if (progress && progress.status === "error") {
+      throw new Error(progress.message || "The backend stopped while applying this response.");
+    }
+    if (!progress || progress.status !== "processing") return;
+    await sleep(POLL_MS);
+  }
+}
+
+async function fetchFlowJobs(stageId) {
+  const data = await apiRetrying(`/jobs?stage_id=${encodeURIComponent(stageId)}`);
+  return data.jobs || [];
+}
+
+// Shared shell for the Flow 2 ("Naresh intake") and Flow 3 ("Haider intake")
+// pages: standalone pages (not part of the per-job wizard) with a job picker
+// filtered to whichever checkpoint that flow reads from, since the person
+// uploading a response may not be the one who created the job. Once the
+// upload is applied, the job is adopted as the active job (same as clicking
+// it from the dashboard) and handed to the normal wizard via refresh() --
+// Flow 2's dispatch screen (renderFlowWaitStage) and Flow 3's confirm/done
+// screens (renderConfirmStage/renderDone) are the exact same shared code
+// every job uses, not a separate copy living on this page.
+function renderFlowIntakePage(config) {
+  setSidebarJobChrome(false);
+  workspaceStateEl.textContent = "Ready";
+  setJobContextActions(null);
+  renderFlowUploadStep(config);
+}
+
+async function renderFlowUploadStep(config) {
+  setCard(`
+    <div class="stage-intro upload-stage-intro">
+      <button class="secondary quiet-action back-to-dashboard" id="backToDashboardBtn" type="button">&larr; Back to dashboard</button>
+      <h2>${escapeHtml(config.title)}</h2>
+      <p class="muted">${escapeHtml(config.description)}</p>
+    </div>
+    <div id="flowIntakeBody"><p class="muted"><span class="mini-spinner"></span>Loading eligible jobs…</p></div>
+  `);
+  document.getElementById("backToDashboardBtn").onclick = () => renderDashboard();
+
+  const body = document.getElementById("flowIntakeBody");
+  let jobs;
+  try {
+    jobs = await fetchFlowJobs(config.pickerStageId);
+  } catch (e) {
+    body.innerHTML = `<p class="muted">Could not load jobs: ${escapeHtml(e.message)}</p>`;
+    return;
+  }
+  if (!document.getElementById("flowIntakeBody")) return;
+  if (!jobs.length) {
+    body.innerHTML = `<p class="muted">No jobs are currently waiting at this checkpoint.</p>`;
+    return;
+  }
+
+  const optionsHtml = jobs.map((j) => `<option value="${escapeHtml(j.job_id)}">${escapeHtml(j.job_id)} — ${escapeHtml(j.filename || "")} (${j.row_count != null ? Number(j.row_count).toLocaleString() : "?"} rows)</option>`).join("");
+  body.innerHTML = `
+    <label class="flow-job-picker">
+      <span>Job</span>
+      <select id="flowJobSelect">${optionsHtml}</select>
+    </label>
+    ${config.filePickersHtml}
+    <div class="row-actions">
+      <button id="flowSubmitBtn" type="button">${iconMarkup("upload")}<span>${escapeHtml(config.submitLabel)}</span></button>
+    </div>
+  `;
+  config.wireFilePickers();
+
+  document.getElementById("flowSubmitBtn").onclick = async () => {
+    if (isBusy) return;
+    const selectedJobId = document.getElementById("flowJobSelect").value;
+    let fd;
+    try {
+      fd = config.buildFormData();
+    } catch (e) {
+      toast(e.message, "error");
+      return;
+    }
+    isBusy = true;
+    lockAllControls(true);
+    renderFlowProcessingStep(config);
+    try {
+      await api(`/jobs/${selectedJobId}${config.path}`, { method: "POST", body: fd });
+      await pollJobProgress(selectedJobId);
+      // Adopt this job as the active one (same as clicking it on the
+      // dashboard) and let the normal wizard render whatever comes next --
+      // no custom completion screen to maintain here.
+      jobId = selectedJobId;
+      localStorage.setItem("k2_job_id", jobId);
+      knownHistoryCount = null;
+      isBusy = false;
+      lockAllControls(false);
+      await refresh(true);
+    } catch (e) {
+      isBusy = false;
+      lockAllControls(false);
+      toast(e.message, "error");
+      renderFlowUploadStep(config);
+    }
+  };
+}
+
+function renderFlowProcessingStep(config) {
+  setCard(`
+    <div class="stage-intro">
+      <span class="stage-kicker">Processing</span>
+      <h2>${escapeHtml(config.title)}</h2>
+      <p class="muted"><span class="mini-spinner"></span> ${escapeHtml(config.processingLabel)}</p>
+    </div>
+  `);
+}
+
+function renderFlow2Page() {
+  renderFlowIntakePage({
+    title: "Flow 2 — Naresh's response",
+    description: "Upload Naresh's completed ID file. Only jobs currently parked at Flow 1 Dispatch are listed.",
+    pickerStageId: "flow1_dispatch",
+    path: "/flow2/naresh-response",
+    submitLabel: "Upload and apply",
+    processingLabel: "Applying Naresh's response — merging IDs and rechecking…",
+    filePickersHtml: filePickerMarkup("flow2FileInput", "flow2FileZone", "flow2FileName", "Select Naresh's response file", "CSV, XLSX, or XLS"),
+    wireFilePickers: () => wireFilePicker("flow2FileInput", "flow2FileZone", "flow2FileName"),
+    buildFormData: () => {
+      const file = document.getElementById("flow2FileInput").files[0];
+      if (!file) throw new Error("Choose Naresh's response file first");
+      const fd = new FormData();
+      fd.append("file", file);
+      return fd;
+    },
+  });
+}
+
+function renderFlow3Page() {
+  renderFlowIntakePage({
+    title: "Flow 3 — Haider's response",
+    description: "Upload both of Haider's completed files together. Only jobs currently parked at Flow 2 Dispatch are listed.",
+    pickerStageId: "flow2_dispatch",
+    path: "/flow3/haider-response",
+    submitLabel: "Upload and apply",
+    processingLabel: "Applying Haider's response — merging corrections…",
+    filePickersHtml: `
+      ${filePickerMarkup("flow3CorrectionsFileInput", "flow3CorrectionsFileZone", "flow3CorrectionsFileName", "Select Haider's corrections file", "Name/DOB/Mobile/CMS workbook")}
+      ${filePickerMarkup("flow3IdsFileInput", "flow3IdsFileZone", "flow3IdsFileName", "Select Haider's IDs response file", "Optional — only if IDs are still invalid")}
+    `,
+    wireFilePickers: () => {
+      wireFilePicker("flow3CorrectionsFileInput", "flow3CorrectionsFileZone", "flow3CorrectionsFileName");
+      wireFilePicker("flow3IdsFileInput", "flow3IdsFileZone", "flow3IdsFileName");
+    },
+    // ids file is optional: if Naresh already resolved every invalid ID,
+    // there's nothing left for Haider's IDs file to fix, so it can be left
+    // unselected -- the backend enforces whether that's actually true.
+    buildFormData: () => {
+      const correctionsFile = document.getElementById("flow3CorrectionsFileInput").files[0];
+      const idsFile = document.getElementById("flow3IdsFileInput").files[0];
+      if (!correctionsFile) throw new Error("Choose Haider's corrections file first");
+      const fd = new FormData();
+      fd.append("corrections_file", correctionsFile);
+      if (idsFile) fd.append("ids_file", idsFile);
+      return fd;
+    },
+  });
 }
 
 function resumeJob(jobIdToResume) {
@@ -817,31 +935,6 @@ async function loadJobHistory() {
   });
 }
 
-async function importJobBackup(file) {
-  if (!file || isBusy) return;
-  isBusy = true;
-  lockAllControls(true);
-  setBusy("Importing saved job...");
-  try {
-    const form = new FormData();
-    form.append("file", file);
-    const imported = await api("/jobs/import", { method: "POST", body: form });
-    jobId = imported.job_id;
-    knownHistoryCount = null;
-    localStorage.setItem("k2_job_id", jobId);
-    if (imported.status === "processing") await pollProgressUntilIdle("Restoring saved job...");
-    clearBusy();
-    toast("Saved job imported", "success");
-    await refresh(false);
-  } catch (e) {
-    clearBusy();
-    toast(e.message || "Could not import the saved job", "error");
-  } finally {
-    isBusy = false;
-    lockAllControls(false);
-  }
-}
-
 async function previewRawUpload(file) {
   const previewEl = document.getElementById("rawUploadPreview");
   if (!previewEl) return;
@@ -853,23 +946,10 @@ async function previewRawUpload(file) {
     const preview = await api("/uploads/raw-preview", { method: "POST", body: form });
     if (!document.getElementById("rawUploadPreview") || selectedName !== file.name) return;
     const missing = preview.missing_required_columns || [];
-    const state = missing.length ? "preview-invalid" : "preview-valid";
-    const missingText = missing.length
-      ? `<div class="preview-alert">Missing required columns: ${escapeHtml(missing.join(", "))}</div>`
-      : "";
-    previewEl.className = `upload-preview ${state}`;
-    previewEl.innerHTML = `
-      <div class="preview-heading">File ready to review</div>
-      <div class="preview-grid">
-        <span><b>File</b>${escapeHtml(preview.filename)}</span>
-        <span><b>Size</b>${formatFileSize(preview.file_size)}</span>
-        <span><b>Rows</b>${preview.row_count.toLocaleString()}</span>
-        <span><b>Columns</b>${preview.column_count}</span>
-        <span><b>Duplicate accounts</b>${preview.duplicate_account_rows.toLocaleString()}</span>
-      </div>
-      <details class="preview-columns"><summary>Detected columns (${preview.column_count})</summary><div>${escapeHtml((preview.columns || []).join(", "))}</div></details>
-      ${missingText}
-    `;
+    previewEl.className = `upload-preview ${missing.length ? "preview-invalid" : "preview-valid"}`;
+    previewEl.innerHTML = missing.length
+      ? `Missing required columns: ${escapeHtml(missing.join(", "))}`
+      : `${preview.row_count.toLocaleString()} rows detected — all required columns found.`;
   } catch (e) {
     if (!document.getElementById("rawUploadPreview")) return;
     previewEl.className = "upload-preview preview-invalid";
@@ -879,7 +959,7 @@ async function previewRawUpload(file) {
 
 function renderStage(status, current) {
   if (current.type === "upload") return renderUploadStage(current);
-  if (current.type === "email") return renderEmailStage(current);
+  if (current.type === "flow1" || current.type === "flow2") return renderFlowWaitStage(current);
   if (current.type === "confirm") return renderConfirmStage(current);
   if (current.type === "manual_edit") return renderManualEditStage(current);
   pendingEdits = {};
@@ -890,35 +970,27 @@ function renderStage(status, current) {
 
 function renderUploadStage(current) {
   const guidance = current.guidance || {};
-  const requiredColumns = guidance.required_columns || [];
-  const overwritten = (guidance.overwrite_fields || []).join(", ");
+  const overwriteCount = (guidance.overwrite_fields || []).length;
+  const description = [
+    guidance.expected_file || "Reference file",
+    `matches on ${guidance.matching_key || "ACCOUNT_NUMBER"}`,
+    overwriteCount ? `updates ${overwriteCount} field(s)` : null,
+    guidance.duplicate_handling,
+  ].filter(Boolean).join(" — ");
   setCard(`
     <div class="stage-intro">
       <span class="stage-kicker">Data source required</span>
       <h2>${escapeHtml(current.title)}</h2>
       <p class="muted">${escapeHtml(current.label)}</p>
     </div>
-    <div class="upload-workbench">
-    <dl class="upload-guidance upload-guidance-left">
-      ${uploadGuidanceCard("fileUp", "Expected file", escapeHtml(guidance.expected_file || "Reference file"))}
-      ${uploadGuidanceCard("listChecks", "Required columns", requiredColumnsMarkup(requiredColumns), requiredColumns.length || null)}
-      ${uploadGuidanceCard("copy", "Duplicates", escapeHtml(guidance.duplicate_handling || "Validated by the backend."))}
-    </dl>
-    <div class="upload-source-picker">
+    <div class="upload-simple-layout">
+      <p class="muted">${escapeHtml(description)}</p>
       ${filePickerMarkup("refFileInput", "referenceFileZone", "referenceFileName", "Select reference file", "CSV, XLSX, or XLS")}
     </div>
-    <dl class="upload-guidance upload-guidance-right">
-      ${uploadGuidanceCard("key", "Matching key", escapeHtml(guidance.matching_key || "ACCOUNT_NUMBER"))}
-      ${uploadGuidanceCard("pencil", "Fields updated", escapeHtml(overwritten || "None at this stage."))}
-      ${uploadGuidanceCard("help", "Unresolved accounts", escapeHtml(guidance.unresolved_label || "Review after the upload."))}
-    </dl>
-    </div>
-    <div class="upload-preview" id="refUploadPreview" aria-live="polite"></div>
     <div class="row-actions">
       <button id="uploadBtn">${iconMarkup("upload")}<span>Upload and continue</span></button>
       ${current.skippable ? `<button class="secondary" id="skipUploadBtn" type="button">Skip this step</button>` : ""}
       ${current.api_invoke_planned ? `<button class="secondary" type="button" disabled title="Coming soon: pull this file automatically via API">Invoke via API (coming soon)</button>` : ""}
-      ${current.stage_id === "cms_integration" ? `<button class="secondary" id="downloadCmsWorkbookBtn" type="button">${iconMarkup("download")}<span>Download review workbook</span></button>` : ""}
     </div>
   `);
   wireFilePicker("refFileInput", "referenceFileZone", "referenceFileName");
@@ -933,11 +1005,6 @@ function renderUploadStage(current) {
     document.getElementById("skipUploadBtn").onclick = () => {
       if (!window.confirm(`Skip "${current.title}" without uploading a file? Accounts will keep their current values.`)) return;
       runAction(`/jobs/${jobId}/skip`, { method: "POST" }, "Skipping stage…");
-    };
-  }
-  if (current.stage_id === "cms_integration") {
-    document.getElementById("downloadCmsWorkbookBtn").onclick = () => {
-      window.location.href = `${API}/jobs/${jobId}/workbook`;
     };
   }
 }
@@ -965,31 +1032,48 @@ function renderConfirmStage(current) {
   };
 }
 
-function renderEmailStage(current) {
+// Flow 1 and Flow 2 dispatch are both "download and wait" screens inside the
+// normal job wizard -- advancing only happens externally, from the separate
+// Flow 2 / Flow 3 intake pages (renderFlow2Page / renderFlow3Page above).
+// The "Next" button is just a navigation shortcut to that page -- it doesn't
+// advance the job itself, only uploading a response there does.
+function renderFlowWaitStage(current) {
+  const isFlow1 = current.type === "flow1";
+  const downloads = isFlow1
+    ? [
+        { label: "Download Haider's Flow 1 file", href: `${API}/jobs/${jobId}/flow1/haider.xlsx` },
+        { label: "Download Naresh's Flow 1 file", href: `${API}/jobs/${jobId}/flow1/naresh.xlsx` },
+      ]
+    : [{ label: "Download Flow 2 file (for Haider)", href: `${API}/jobs/${jobId}/flow2/haider.xlsx` }];
+  const waitingOn = isFlow1
+    ? "Naresh's response is uploaded on the Flow 2 page"
+    : "Haider's response is uploaded on the Flow 3 page";
+  const invalidNote = isFlow1
+    ? ""
+    : current.invalid_count > 0
+      ? `<p class="muted">${current.invalid_count} account(s) still have an invalid ID — that's what's in the Flow 2 file above.</p>`
+      : `<p class="muted">No IDs are currently invalid — Haider doesn't need an IDs file for this job on Flow 3, just his corrections file.</p>`;
+  const nextLabel = isFlow1 ? "Next: Flow 2" : "Next: Flow 3";
   setCard(`
-    <div class="stage-intro">
+    <div class="stage-intro upload-stage-intro">
+      <button class="secondary quiet-action back-to-dashboard" id="backToDashboardBtn" type="button">&larr; Back to dashboard</button>
       <span class="stage-kicker">Share checkpoint</span>
       <h2>${escapeHtml(current.title)}</h2>
-      <p class="muted">Automated email delivery isn't wired up yet. Download the current dataset (${current.row_count} rows) and share it manually, then continue.</p>
+      <p class="muted">Download the file(s) below (${current.row_count} rows) and share them manually. This job stays parked here until ${waitingOn}.</p>
+      ${invalidNote}
     </div>
     <div class="row-actions">
-      <button class="secondary" id="downloadEmailBtn" type="button">${iconMarkup("download")}<span>Download Excel</span></button>
-      <button id="continueEmailBtn" type="button">${iconMarkup("check")}<span>Continue</span></button>
-      ${current.skippable ? `<button class="secondary" id="skipEmailBtn" type="button">Skip this step</button>` : ""}
+      ${downloads.map((d, i) => `<button class="secondary" id="flowDownloadBtn${i}" type="button">${iconMarkup("download")}<span>${escapeHtml(d.label)}</span></button>`).join("")}
+    </div>
+    <div class="row-actions">
+      <button id="flowNextBtn" type="button">${iconMarkup("play")}<span>${nextLabel}</span></button>
     </div>
   `);
-  document.getElementById("downloadEmailBtn").onclick = () => {
-    window.location.href = `${API}/jobs/${jobId}/email/download`;
-  };
-  document.getElementById("continueEmailBtn").onclick = () => {
-    runAction(`/jobs/${jobId}/send-email`, { method: "POST" }, "Continuing…");
-  };
-  if (current.skippable) {
-    document.getElementById("skipEmailBtn").onclick = () => {
-      if (!window.confirm(`Skip "${current.title}" without downloading/sharing the file?`)) return;
-      runAction(`/jobs/${jobId}/skip`, { method: "POST" }, "Skipping stage…");
-    };
-  }
+  document.getElementById("backToDashboardBtn").onclick = () => renderDashboard();
+  downloads.forEach((d, i) => {
+    document.getElementById(`flowDownloadBtn${i}`).onclick = () => { window.location.href = d.href; };
+  });
+  document.getElementById("flowNextBtn").onclick = () => (isFlow1 ? renderFlow2Page() : renderFlow3Page());
 }
 
 function renderDone(current) {

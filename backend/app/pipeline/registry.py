@@ -5,7 +5,7 @@ stage's own behavior in its file under stages/ -- this file should only
 change when a stage is added, removed, or reordered."""
 from .stages.address_fix import stage_address_fix
 from .stages.clean import stage_clean_linebreaks
-from .stages.cms_integration import CMS_SHEET_COLS, CMS_UPDATE_COLS, stage_cms_integration, validate_cms_reference_inputs
+from .stages.cms_integration import CMS_UPDATE_COLS
 from .stages.default_id import default_id_invalid_mask, stage_default_id_assign
 from .stages.final_id_check import mask_id_only_invalid, validation_reasons_id_only
 from .stages.id_dob_validate import mask_id_dob_invalid, validation_reasons_id_dob
@@ -20,8 +20,6 @@ RAW_REQUIRED_COLS = list(dict.fromkeys(["ACCOUNT_NUMBER", *REPLACE_MAPPING_COLS,
 def validate_upload_inputs(stage_id: str, df, ref_df):
     if stage_id == "replace":
         validate_replace_reference_inputs(df, ref_df)
-    elif stage_id == "cms_integration":
-        validate_cms_reference_inputs(ref_df)
 
 
 STAGES = [
@@ -41,18 +39,8 @@ STAGES = [
     {"id": "id_dob_validate", "title": "ID & DoB Validation", "type": "manual_edit"},
     {"id": "address_fix", "title": "Address Auto-Fix", "type": "auto"},
     {"id": "mobile_fill", "title": "Missing Mobile Numbers", "type": "manual_edit"},
-    {"id": "cms_integration", "title": "CMS Data Integration", "type": "upload",
-     "skippable": True, "api_invoke_planned": True,
-     "upload_label": "CMS export with ACCOUNT_NUMBER, CARD_NUMBER, ACCOUNT_TYPE, CARD_TYPE, CARD_PROGRAM, CARD_STATUS",
-     "upload_guidance": {
-         "expected_file": "CMS export",
-         "required_columns": ["ACCOUNT_NUMBER", *CMS_UPDATE_COLS],
-         "matching_key": "ACCOUNT_NUMBER",
-         "overwrite_fields": CMS_UPDATE_COLS,
-         "duplicate_handling": "The first row for each duplicated ACCOUNT_NUMBER is used.",
-         "unresolved_label": "Accounts not found in this file remain unresolved for CMS fields.",
-     }},
-    {"id": "send_email", "title": "Send Email", "type": "email", "skippable": True},
+    {"id": "flow1_dispatch", "title": "Flow 1 Dispatch", "type": "flow1"},
+    {"id": "flow2_dispatch", "title": "Flow 2 Dispatch", "type": "flow2"},
     {"id": "final_id_check", "title": "Final ID Validation", "type": "manual_edit"},
     {"id": "default_id", "title": "Default ID Assignment", "type": "confirm"},
     {"id": "done", "title": "Final Output", "type": "done"},
@@ -66,7 +54,6 @@ AUTO_HANDLERS = {
 
 UPLOAD_HANDLERS = {
     "replace": stage_replace_reference,
-    "cms_integration": stage_cms_integration,
 }
 
 CONFIRM_HANDLERS = {

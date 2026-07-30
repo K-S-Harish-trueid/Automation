@@ -20,6 +20,27 @@ def mask_id_dob_invalid(df: pd.DataFrame) -> pd.Series:
     return ~(type_valid & num_valid & dob_valid)
 
 
+def mask_dob_invalid(df: pd.DataFrame) -> pd.Series:
+    """DOB-only half of mask_id_dob_invalid -- used by the Flow 1 Haider
+    handoff, which reviews DOB separately from ID (Naresh's Flow 2 sheet)."""
+    return ~compute_dob_validity(df)
+
+
+def validation_reasons_dob_only(df: pd.DataFrame) -> dict[int, list[str]]:
+    dob = _s(df, "ACCOUNT_HOLDER_DOB")
+    dob_available = series_available(dob)
+    parsed = parse_dob_series(dob)
+    age_years = (pd.Timestamp.today() - parsed).dt.days / 365.25
+    checks = [
+        (~dob_available, "DOB is missing."),
+        (dob_available & parsed.isna(), "DOB is not a recognized date."),
+        (parsed.notna() & parsed.dt.year.eq(1900), "DOB cannot use the default year 1900."),
+        (parsed.notna() & parsed.dt.year.ne(1900) & age_years.lt(18),
+         "DOB indicates the customer is under 18."),
+    ]
+    return _reasons_by_row(df, mask_dob_invalid(df), checks)
+
+
 def validation_reasons_id_dob(df: pd.DataFrame) -> dict[int, list[str]]:
     dob = _s(df, "ACCOUNT_HOLDER_DOB")
     dob_available = series_available(dob)

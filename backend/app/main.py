@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import store
-from .routes import jobs, rollback, stage, stage_test
+from .routes import flow, jobs, rollback, stage, stage_test
 
 
 @asynccontextmanager
@@ -40,6 +40,7 @@ app.include_router(jobs.router)
 app.include_router(rollback.router)
 app.include_router(stage.router)
 app.include_router(stage_test.router)
+app.include_router(flow.router)
 
 frontend_dir = Path(__file__).resolve().parent.parent.parent / "frontend"
 if frontend_dir.exists():

@@ -4,5 +4,6 @@ python-multipart
 pandas>=2.0
 numpy
 openpyxl
+python-calamine
 xlrd>=2.0.1
 pyarrow

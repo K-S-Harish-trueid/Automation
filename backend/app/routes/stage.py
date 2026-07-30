@@ -18,7 +18,6 @@ from ..helpers import (
     _require_job,
     _upload_metrics,
     _validate_edit_items,
-    _write_review_sheets_xlsx,
 )
 from ..schemas import DraftRequest, EditItem, SubmitRequest
 
@@ -61,14 +60,19 @@ def current_stage_detail(job_id: str, page: int = 1):
             "api_invoke_planned": bool(stage.get("api_invoke_planned")),
         }
 
-    if stage["type"] == "email":
-        return {
-            "type": "email",
+    if stage["type"] in ("flow1", "flow2"):
+        payload = {
+            "type": stage["type"],
             "stage_id": stage["id"],
             "title": stage["title"],
             "row_count": len(df),
-            "skippable": bool(stage.get("skippable")),
         }
+        if stage["type"] == "flow2":
+            # Lets the wait screen (and Flow 3) tell the operator whether
+            # there's anything left for Haider's IDs file to fix -- if this
+            # is 0, Flow 3 doesn't need an IDs file for this job at all.
+            payload["invalid_count"] = int(pipeline.mask_id_only_invalid(df).sum())
+        return payload
 
     if stage["type"] == "confirm":
         preview_fn = pipeline.CONFIRM_PREVIEW.get(stage["id"])
@@ -187,8 +191,8 @@ async def upload_reference(job_id: str, file: UploadFile = File(...)):
 @router.post("/api/jobs/{job_id}/skip")
 def skip_stage(job_id: str):
     """Generic skip for any stage marked `skippable: True` in the registry
-    (upload stages like the historical override / CMS export, or the email
-    checkpoint) -- advances the stage with no data change."""
+    (currently just the historical-override upload stage) -- advances the
+    stage with no data change."""
     status = _require_job(job_id)
     stage = _current_stage(status)
     if stage is None or not stage.get("skippable"):
@@ -222,63 +226,6 @@ def skip_stage(job_id: str):
 
     _run_in_background(job_id, resolve_gate)
     return {"job_id": job_id, "status": "processing"}
-
-
-@router.post("/api/jobs/{job_id}/send-email")
-def send_email_action(job_id: str):
-    """Stub for the eventual real email-send: for now just advances the
-    stage. The operator is expected to have used the download button on this
-    screen (or the review workbook) to share the file manually."""
-    status = _require_job(job_id)
-    stage = _current_stage(status)
-    if stage is None or stage["type"] != "email":
-        raise HTTPException(400, "current stage is not the send-email stage")
-
-    if not store.try_begin_processing(job_id):
-        raise HTTPException(409, "Job is already processing")
-    try:
-        store.create_checkpoint(job_id, f"Before {stage['title']}", stage["id"])
-    except OSError as e:
-        store.end_processing(job_id)
-        raise HTTPException(500, f"The backend could not write a rollback checkpoint: {e}") from e
-
-    total = len(status["stages"])
-    store.set_progress(
-        job_id, status="processing", current_step_index=status["stage_index"] + 1,
-        total_steps=total, current_step_name=stage["title"],
-        percent=round(status["stage_index"] / total * 100),
-    )
-
-    def resolve_gate():
-        st = store.get_status(job_id)
-        cur = _current_stage(st)
-        cur["status"] = "done"
-        st["history"].append({
-            "stage_id": cur["id"], "title": cur["title"],
-            "summary": "Email delivery isn't automated yet -- the in-progress file was downloaded and shared manually.",
-            "metrics": {},
-        })
-        st["stage_index"] += 1
-
-    _run_in_background(job_id, resolve_gate)
-    return {"job_id": job_id, "status": "processing"}
-
-
-@router.get("/api/jobs/{job_id}/email/download")
-def download_email_snapshot(job_id: str):
-    """Download the in-progress dataset while parked at the Send Email
-    checkpoint -- repeatable, no side effects, does not advance the stage."""
-    status = _require_job(job_id)
-    stage = _current_stage(status)
-    if stage is None or stage["type"] != "email":
-        raise HTTPException(400, "current stage does not offer this download")
-    if store.is_processing(job_id):
-        raise HTTPException(409, "Wait for the current processing step before downloading")
-
-    df = store.get_df(job_id)
-    out_path = store.JOBS_DIR / job_id / "email_snapshot.xlsx"
-    _write_review_sheets_xlsx(df, out_path)
-    return FileResponse(out_path, filename=f"{job_id}.xlsx")
 
 
 @router.post("/api/jobs/{job_id}/draft")
@@ -321,10 +268,8 @@ def download_workbook(job_id: str):
         stage for i, stage in enumerate(status["stages"])
         if stage["type"] == "manual_edit" and i <= status["stage_index"]
     ]
-    cms_index = next((i for i, s in enumerate(status["stages"]) if s["id"] == "cms_integration"), None)
-    cms_reached = cms_index is not None and cms_index <= status["stage_index"]
-    if not reached and not cms_reached:
-        raise HTTPException(400, "No manual review or CMS stage has been reached yet.")
+    if not reached:
+        raise HTTPException(400, "No manual review stage has been reached yet.")
 
     out_path = store.JOBS_DIR / job_id / "K2_Manual_Review.xlsx"
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
@@ -338,11 +283,6 @@ def download_workbook(job_id: str):
             sheet_name = stage["title"][:31]
             flagged.to_excel(writer, sheet_name=sheet_name, index=False)
             _autofit_worksheet(writer.sheets[sheet_name], flagged)
-        if cms_reached:
-            cms_sheet = df[["ACCOUNT_NUMBER", *pipeline.CMS_SHEET_COLS]].copy()
-            cms_sheet.insert(0, "row_key", cms_sheet.index)
-            cms_sheet.to_excel(writer, sheet_name="CMS Data Integration", index=False)
-            _autofit_worksheet(writer.sheets["CMS Data Integration"], cms_sheet)
     return FileResponse(out_path, filename="K2_Manual_Review.xlsx")
 
 
@@ -425,7 +365,9 @@ async def submit_workbook(job_id: str, file: UploadFile = File(...), force_advan
     cfg = pipeline.MANUAL_STAGES[stage["id"]]
     raw = await file.read()
     try:
-        sheet_df = pd.read_excel(io.BytesIO(raw), sheet_name=stage["title"], dtype=str).fillna("")
+        sheet_df = pd.read_excel(
+            io.BytesIO(raw), sheet_name=stage["title"], dtype=str, engine="calamine"
+        ).fillna("")
     except ValueError as e:
         raise HTTPException(
             400, f"Workbook is missing the '{stage['title']}' sheet for the current stage."

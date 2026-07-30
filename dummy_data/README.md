@@ -6,7 +6,7 @@ to hit a specific rule:
 
 | Account | Demonstrates |
 |---|---|
-| 9000001 | Fully valid (Passport); also gets matched by `dummy_cms_export.csv` |
+| 9000001 | Fully valid (Passport); also gets matched by `dummy_cms_export.csv` (see note below) |
 | 9000002 | Fully valid (National Id); gets overwritten by `dummy_replace_reference.xlsx` |
 | 9000003 | 1-character first name → `name_validate` |
 | 9000004 | 1-character middle name → `name_validate` |
@@ -23,15 +23,57 @@ to hit a specific rule:
 | 9000015 | Blank phone → `mobile_fill` |
 | 9000016 | All-zero phone → `mobile_fill` |
 | 9000017 | Overwritten by `dummy_replace_reference.xlsx` (name/address/ID all replaced) |
-| 9000018 | Matched by `dummy_cms_export.csv` |
-| 9000019 | Fully valid (Civil Id); also matched by `dummy_cms_export.csv` |
+| 9000018 | Matched by `dummy_cms_export.csv` (see note below) |
+| 9000019 | Fully valid (Civil Id); also matched by `dummy_cms_export.csv` (see note below) |
 | 9000020 | Malformed ID **and** missing phone at once — shows a row flagged by two different stages |
 
 ## Files
 
 - **dummy_raw.csv** — upload this first, at the initial "Start a new batch" screen.
 - **dummy_replace_reference.xlsx** — upload at the `replace` (Data Consistency Update) stage. Overwrites 9000002 and 9000017.
-- **dummy_cms_export.csv** — upload at the `cms_integration` stage. Fills in CARD_NUMBER/ACCOUNT_TYPE/CARD_TYPE/CARD_PROGRAM/CARD_STATUS for 9000001, 9000018, 9000019.
+- **dummy_cms_export.csv** — predates the Flow 1/2/3 reviewer handoff (see
+  `backend/README.md`) and is no longer consumed by an automatic stage; CMS
+  data now comes in by hand through Haider's Flow 3 corrections file instead.
+  Kept here as reference for what CARD_NUMBER/ACCOUNT_TYPE/CARD_TYPE/
+  CARD_PROGRAM/CARD_STATUS values 9000001, 9000018, and 9000019 were designed
+  to match.
 
 Regenerate with `gen_dummy_data.py` if the pipeline rules change (script not
 checked in — ask to have it regenerated).
+
+## Testing Flow 1/2/3 (the reviewer handoff)
+
+Three folders, one per flow, holding exactly what to upload at that step.
+These were generated against this exact `dummy_raw.csv` and verified
+end-to-end (each file was fed through the real pipeline once to confirm the
+final result), so following the sequence below reproduces a known-good run.
+Each flow is its own self-contained mini-pipeline (input → merge → verify →
+dispatch), not one continuous line — Flow 1 stops for good once it dispatches;
+Flow 2 and Flow 3 are separate pages, each with its own job picker, and once
+their upload is applied the job is handed straight to the normal wizard
+(Flow 2 lands back on its own dispatch screen; Flow 3 lands on the existing
+confirm → final output screens):
+
+- **`init/`** — `dummy_raw.csv` + `dummy_replace_reference.xlsx`, for
+  starting a brand-new job (Flow 1). **Skip the `replace` stage** (don't
+  upload `dummy_replace_reference.xlsx`) if you want Flow 1 Dispatch to match
+  the files below exactly — the `flow2`/`flow3` responses were generated
+  against a run where 9000002/9000017 were never overwritten by it.
+  (Uploading it instead is a fine way to test `replace` on its own, just
+  don't expect the flow files to line up with the fixtures below afterward.)
+- **`flow2/naresh_response.xlsx`** — upload on the Flow 2 page once the job
+  reaches Flow 1 Dispatch. Fixes the ID on 9000006 and 9000007; leaves
+  9000017 and 9000020 blank (Naresh can't resolve those two, matching
+  "Naresh does what he can, Haider gets the rest").
+- **`flow3/haider_corrections_response.xlsx`** + **`flow3/haider_ids_response.xlsx`**
+  — upload together on the Flow 3 page once the job reaches Flow 2 Dispatch.
+  Fixes Name (9000003/4/5), DOB (9000008, 9000010), Mobile (9000015,
+  9000016), CMS (9000001, 9000018, 9000019), and — in the IDs file — the ID
+  on 9000017; deliberately leaves 9000017's name/mobile and 9000020's
+  DOB/mobile/ID blank to demonstrate that a blank cell means "no change",
+  never "clear this field".
+
+Expected end state: every account resolves except **9000020**, which reaches
+the `default_id` confirm gate (now surfaced directly inside Flow 3, not a
+separate trip to the dashboard) and gets an auto-generated Civil ID — the
+one row nobody could fix across all three flows.

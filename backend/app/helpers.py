@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from openpyxl.utils import get_column_letter
 
 from . import pipeline, store
+from .pipeline import flow_merge
 from .schemas import EditItem
 
 
@@ -137,62 +138,68 @@ def _validate_edit_items(df: pd.DataFrame, cfg: dict, edits: list[EditItem]):
             raise HTTPException(400, f"row_key {edit.row_key} not found")
 
 
-# (stage_id, columns) pairs for the Send Email reviewer handoff -- one named
-# sheet per manual-edit stage topic, plus the CMS exception. Sheet names come
-# from the matching STAGES title so they stay in sync with the registry.
-_REVIEW_SHEET_COLUMNS = [
-    ("name_validate", ["ACCOUNT_FIRST_NAME", "ACCOUNT_MIDDLE_NAME", "ACCOUNT_LAST_NAME"]),
-    ("id_dob_validate", ["ID_TYPE", "ID_NUMBER", "ACCOUNT_HOLDER_DOB"]),
-    ("mobile_fill", ["PHONE_NUMBER"]),
-    ("cms_integration", ["CARD_NUMBER", "ACCOUNT_TYPE", "CARD_TYPE", "CARD_PROGRAM", "CARD_STATUS"]),
-    ("final_id_check", ["ID_TYPE", "ID_NUMBER"]),
-]
+def _write_filtered_sheet(writer, sheet_name: str, df: pd.DataFrame, mask: pd.Series, cols: list[str], reasons_fn):
+    """One flow-handoff sheet: ACCOUNT_NUMBER + `cols`, cut down to the
+    flagged rows, with a validation_notes column explaining why each row
+    is there."""
+    sheet_df = df.loc[mask]
+    sheet = sheet_df[["ACCOUNT_NUMBER", *cols]].copy()
+    reasons = reasons_fn(df)
+    sheet["validation_notes"] = [", ".join(reasons.get(int(k), [])) for k in sheet_df.index]
+    sheet.to_excel(writer, sheet_name=sheet_name, index=False)
+    _autofit_worksheet(writer.sheets[sheet_name], sheet)
 
 
-def _validation_notes_column(df: pd.DataFrame, stage_id: str) -> pd.Series | None:
-    """Per-row 'why is this flagged' text for sheets that map to a manual_edit
-    stage's validator/reasons pair; None for sheets with no such rule (e.g.
-    CMS Data Integration)."""
-    cfg = pipeline.MANUAL_STAGES.get(stage_id)
-    if not cfg:
-        return None
-    reasons = cfg["reasons"](df)
-    return pd.Series(
-        [", ".join(reasons.get(int(row_key), [])) for row_key in df.index],
-        index=df.index,
-    )
-
-
-def _write_review_sheets_xlsx(df: pd.DataFrame, out_path) -> None:
-    """Write the Send Email reviewer handoff: one sheet per manual-edit stage
-    topic (Name Validation, ID & DoB, Mobile, Final ID), cut down to only
-    that stage's flagged rows with a 'validation_notes' column explaining why
-    -- since manual-edit stages are bypassed and an outside reviewer needs to
-    know what to fix without the tool's UI. CMS Data Integration is the one
-    exception: it's a merge report, not a validation gate, so it keeps every
-    row, unfiltered, with no notes column."""
-    titles = {s["id"]: s["title"] for s in pipeline.STAGES}
+def _write_flow1_haider_xlsx(df: pd.DataFrame, out_path) -> None:
+    """Flow 1 dispatch file for Haider: Name/DOB/Mobile sheets cut down to
+    currently-flagged rows, plus a CMS Data Integration sheet listing every
+    account with the CMS columns blank for him to fill in by hand -- CMS is
+    no longer an automated upload merge, Haider is the sole source now."""
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        for stage_id, cols in _REVIEW_SHEET_COLUMNS:
-            cfg = pipeline.MANUAL_STAGES.get(stage_id)
-            available = [c for c in cols if c in df.columns]
-            if not available:
-                continue
-            sheet_df = df.loc[cfg["validator"](df)] if cfg else df
-            sheet = sheet_df[["ACCOUNT_NUMBER", *available]].copy()
-            if cfg:
-                sheet["validation_notes"] = _validation_notes_column(sheet_df, stage_id).values
-            sheet_name = titles.get(stage_id, stage_id)[:31]
-            sheet.to_excel(writer, sheet_name=sheet_name, index=False)
-            _autofit_worksheet(writer.sheets[sheet_name], sheet)
+        _write_filtered_sheet(
+            writer, flow_merge.SHEET_NAME_VALIDATE, df, pipeline.mask_name_invalid(df),
+            flow_merge.NAME_COLS, pipeline.validation_reasons_name,
+        )
+        _write_filtered_sheet(
+            writer, flow_merge.SHEET_DOB_MISTAKES, df, pipeline.mask_dob_invalid(df),
+            flow_merge.DOB_COLS, pipeline.validation_reasons_dob_only,
+        )
+        _write_filtered_sheet(
+            writer, flow_merge.SHEET_MISSING_MOBILE, df, pipeline.mask_mobile_missing(df),
+            flow_merge.MOBILE_COLS, pipeline.validation_reasons_mobile,
+        )
+
+        cms_sheet = df[["ACCOUNT_NUMBER"]].copy()
+        for col in pipeline.CMS_UPDATE_COLS:
+            cms_sheet[col] = ""
+        cms_sheet.to_excel(writer, sheet_name=flow_merge.SHEET_CMS, index=False)
+        _autofit_worksheet(writer.sheets[flow_merge.SHEET_CMS], cms_sheet)
+
+
+def _write_ids_only_xlsx(df: pd.DataFrame, out_path, sheet_name: str) -> None:
+    """Shared shape for Flow 2's Naresh input file and Flow 2's dispatch
+    output for Haider: one sheet, currently ID-invalid rows only."""
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        _write_filtered_sheet(
+            writer, sheet_name, df, pipeline.mask_id_only_invalid(df),
+            flow_merge.ID_COLS, pipeline.validation_reasons_id_only,
+        )
+
+
+def _write_flow1_naresh_xlsx(df: pd.DataFrame, out_path) -> None:
+    _write_ids_only_xlsx(df, out_path, "ID Corrections")
+
+
+def _write_flow2_haider_xlsx(df: pd.DataFrame, out_path) -> None:
+    _write_ids_only_xlsx(df, out_path, "ID Corrections")
 
 
 def _write_flat_xlsx(df: pd.DataFrame, out_path) -> None:
     """Write the current dataset as a single flat sheet with every column --
     the same shape as the original raw import. Used for the final download
     once the pipeline is done: by then there's nothing left to review, so
-    the topic-split, flagged-rows-only format used for the Send Email
-    handoff (_write_review_sheets_xlsx) doesn't apply."""
+    the topic-split, flagged-rows-only format used for the flow handoffs
+    (_write_flow1_haider_xlsx and friends) doesn't apply."""
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="Final Output", index=False)
         _autofit_worksheet(writer.sheets["Final Output"], df)

@@ -874,120 +874,21 @@ input:focus-visible,
   color: var(--text-soft);
 }
 
-.preview-heading { color: var(--text); font-weight: 600; }
-.preview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 16px; }
-.preview-grid span,
 .quality-grid span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
-.preview-grid b,
 .quality-grid b { color: var(--muted); font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
-.preview-alert { color: #ffc0c5; line-height: 1.5; }
-.preview-columns { color: var(--text-soft); }
-.preview-columns summary { cursor: pointer; color: var(--accent-strong); font-size: 12px; }
-.preview-columns div { margin-top: 8px; color: var(--muted); font-family: var(--font-mono); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
 
-/* ---------- Upload workbench ---------- */
+/* ---------- Upload screens (description + dropzone) ---------- */
 
-.upload-guidance {
+.upload-simple-layout {
   display: grid;
-  gap: 12px;
-  margin: 0;
-}
-
-.upload-workbench {
-  display: grid;
-  grid-template-columns: minmax(178px, 1fr) minmax(250px, 1.2fr) minmax(178px, 1fr);
-  gap: 14px;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  align-items: center;
+  gap: 24px;
   margin: 24px 0 20px;
-}
-
-.upload-info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 12px;
-  margin: 40px 0 26px;
-}
-
-.upload-guidance > .guidance-card,
-.upload-info-grid > .guidance-card {
-  min-width: 0;
-  min-height: 68px;
-  padding: 14px 16px;
-  position: relative;
-  overflow: hidden;
-  background: #14202b;
-  border: 1px solid rgba(124, 185, 210, 0.64);
-  border-radius: var(--radius-lg);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    inset 0 0 22px rgba(80, 172, 221, 0.08),
-    0 7px 16px rgba(0, 0, 0, 0.24),
-    0 0 18px rgba(52, 147, 223, 0.08);
-  transition: all 250ms ease;
-}
-
-.upload-guidance > .guidance-card:hover,
-.upload-info-grid > .guidance-card:hover {
-  border-color: rgba(148, 226, 245, 0.86);
-  background: #192a38;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.13),
-    0 6px 18px rgba(0, 0, 0, 0.28),
-    0 0 22px rgba(83, 181, 239, 0.16);
-  transform: translateY(-2px);
 }
 
 .guidance-card { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: start; gap: 10px; }
 .guidance-card > div { min-width: 0; }
-.upload-guidance > .guidance-card::before,
-.upload-info-grid > .guidance-card::before {
-  position: absolute;
-  inset: 0;
-  background: transparent;
-  content: "";
-  opacity: 0.8;
-  pointer-events: none;
-}
-.upload-guidance > .guidance-card > *,
-.upload-info-grid > .guidance-card > * { position: relative; z-index: 1; }
-
-.upload-file-card {
-  cursor: pointer;
-  text-decoration: none;
-}
-
-.upload-file-copy {
-  display: grid;
-  min-width: 0;
-  align-content: center;
-  gap: 4px;
-}
-
-.upload-file-label {
-  color: #a5b5c5;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.upload-file-card .file-picker-trigger {
-  overflow-wrap: anywhere;
-}
-
-.upload-file-card .file-name {
-  color: var(--good);
-}
-
-.upload-file-card.file-selected {
-  border-color: rgba(114, 226, 230, 0.62);
-  background: #142a36;
-}
-
-.upload-file-card.file-selected .guidance-icon {
-  border-color: rgba(114, 226, 230, 0.5);
-  color: var(--accent-strong);
-}
 
 .guidance-icon {
   display: grid;
@@ -1010,8 +911,6 @@ input:focus-visible,
   transform: none;
 }
 
-.detail-guidance-card .guidance-icon { background: rgba(16, 32, 48, 0.68); }
-
 .guidance-card:hover .guidance-icon {
   border-color: rgba(79, 159, 255, 0.35);
   color: var(--accent-strong);
@@ -1019,54 +918,6 @@ input:focus-visible,
 }
 
 .guidance-icon .ui-icon { width: 17px; height: 17px; }
-
-.upload-guidance dt {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-  color: #a5b5c5;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.guidance-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 18px;
-  padding: 0 5px;
-  background: rgba(79, 159, 255, 0.1);
-  border: 1px solid rgba(79, 159, 255, 0.25);
-  border-radius: 10px;
-  color: var(--accent-strong);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
-}
-.upload-guidance dd { margin: 0; color: var(--text-soft); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
-.required-columns summary { cursor: pointer; color: var(--accent-strong); font-size: 12px; }
-.required-columns[open] summary { margin-bottom: 8px; }
-.required-columns div { color: var(--muted); font-family: var(--font-mono); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-
-.upload-source-picker { min-width: 0; }
-.upload-workbench .dropzone {
-  min-height: 246px;
-  margin: 0;
-  padding: 24px;
-  background: #142433;
-  border: 1.5px dashed rgba(76, 147, 173, 0.55);
-  border-radius: var(--radius-xl);
-  box-shadow:
-    inset 0 0 0 1px rgba(116, 217, 234, 0.08),
-    0 0 0 4px rgba(79, 159, 255, 0.03),
-    0 0 20px rgba(79, 159, 255, 0.04);
-}
 
 .row-actions > button:not(.secondary) {
   background: #287fbe;
@@ -1078,20 +929,6 @@ input:focus-visible,
   background: #3897d1;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 7px 18px rgba(41, 111, 223, 0.36);
 }
-.upload-workbench .dropzone:hover,
-.upload-workbench .dropzone.drag-over,
-.upload-workbench .dropzone.file-selected {
-  background: rgba(22, 42, 58, 0.9);
-  border-color: rgba(114, 226, 230, 0.7);
-  box-shadow:
-    inset 0 0 0 1px rgba(116, 217, 234, 0.2),
-    0 0 0 4px rgba(79, 159, 255, 0.06),
-    0 0 30px rgba(116, 217, 234, 0.08),
-    0 0 60px rgba(79, 159, 255, 0.04);
-}
-.upload-workbench .file-picker-trigger { font-size: 16px; }
-.upload-workbench .file-picker-note { color: #b4c5d3; }
-.upload-workbench .file-name { max-width: 250px; }
 .file-picker-icon {
   display: grid;
   width: 64px;
@@ -1626,14 +1463,42 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
   }
 }
 
+/* ---------- Flow 2/3 intake pages ---------- */
+
+.flow-job-picker {
+  display: grid;
+  gap: 6px;
+  margin: 20px 0;
+  max-width: 520px;
+}
+.flow-job-picker > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.flow-job-picker select {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.flow-job-picker select:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
 /* ---------- Responsive ---------- */
 
 @media (min-width: 861px) and (max-width: 1120px) {
   .layout { grid-template-columns: 240px minmax(0, 1fr); }
   .main { padding: 28px 26px 40px; }
   .card { padding: 26px; }
-  .upload-workbench { grid-template-columns: minmax(148px, 1fr) minmax(230px, 1.1fr) minmax(148px, 1fr); gap: 10px; }
-  .upload-guidance > .guidance-card { padding: 11px; }
 }
 
 @media (max-width: 860px) {
@@ -1654,10 +1519,7 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
   .stage-list li { min-height: 46px; }
   .sidebar-footer { display: none; }
   .main { padding: 24px 20px 36px; }
-  .upload-workbench { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .upload-info-grid { gap: 10px; }
-  .upload-source-picker { grid-column: 1 / -1; grid-row: 1; }
-  .upload-guidance { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .upload-simple-layout { grid-template-columns: 1fr; gap: 16px; }
 }
 
 @media (max-width: 560px) {
@@ -1743,19 +1605,12 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
     white-space: normal;
   }
   .review-controls #skipBtn { grid-column: 1 / -1; }
-  .upload-workbench { grid-template-columns: 1fr; gap: 12px; }
-  .upload-info-grid { grid-template-columns: 1fr; margin-top: 26px; }
-  .upload-source-picker { grid-column: auto; grid-row: auto; order: -1; }
-  .upload-guidance { grid-template-columns: 1fr; gap: 10px; }
-  .upload-guidance > .guidance-card { min-height: 0; padding: 11px; }
   .guidance-card { grid-template-columns: 30px minmax(0, 1fr); gap: 9px; }
   .guidance-icon { width: 30px; height: 30px; }
-  .upload-workbench .dropzone,
   .dropzone { min-height: 164px; padding: 20px; }
   .row-actions { align-items: stretch; }
   .row-actions button { width: 100%; }
   .review-toolbar { gap: 16px; }
-  .preview-grid,
   .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .review-controls { display: block; }
   #toast { right: 14px; bottom: 14px; max-width: calc(100vw - 28px); }
