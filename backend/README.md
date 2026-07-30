@@ -26,6 +26,23 @@ from the same process, so there's nothing else to start.
 
 Add `--reload` during development to auto-restart on code changes.
 
+### Expose it over the internet with ngrok
+
+From the project root (not this `backend/` folder), `run.py` wraps the same
+uvicorn app and adds an `NGROK` env var:
+
+```
+NGROK=true python run.py
+```
+
+Requires the `ngrok` CLI installed and already authenticated
+(`ngrok config check`). The public HTTPS URL prints to the console at
+startup; while the server is running it's also always available at
+**http://127.0.0.1:4040** (ngrok's local web interface), so you don't need to
+scroll back to find it. See the security note under "Hosting the frontend
+and backend separately" below — this makes the no-auth backend reachable
+from the public internet, not just localhost.
+
 ### Try it with dummy data
 
 `../dummy_data/` has a small 20-row fixture built to hit every validation
