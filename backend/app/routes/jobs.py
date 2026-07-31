@@ -52,6 +52,15 @@ def job_progress(job_id: str):
     return store.get_progress(job_id)
 
 
+@router.get("/api/jobs/{job_id}/raw-upload")
+def download_raw_upload(job_id: str):
+    _require_job(job_id)
+    path = store.get_raw_upload_path(job_id)
+    if path is None:
+        raise HTTPException(404, "Raw upload file is not available for this job")
+    return FileResponse(path, filename=f"{job_id}_raw_upload{path.suffix}")
+
+
 @router.get("/api/jobs/{job_id}/download")
 def download_final(job_id: str):
     status = _require_job(job_id)

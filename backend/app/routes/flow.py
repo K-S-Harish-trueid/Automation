@@ -71,34 +71,36 @@ def _begin_gate(job_id: str, status: dict, stage: dict):
 
 # ---- Flow 1: dispatch downloads -------------------------------------------
 
+def _download_frozen_dispatch_file(job_id: str, out_name: str, expected_stage_type: str, writer):
+    """Serve a flow dispatch file as a permanent artifact of the job instead
+    of regenerating it from the live dataframe on every call: the first
+    request (made while the job is actually parked at the matching stage)
+    freezes it to disk, and every request after that -- from any later
+    stage, including after the job is fully done -- just serves that same
+    frozen copy. Without this, the file becomes unrecoverable the moment the
+    job advances (the live dataframe has already been overwritten by
+    whoever's response resolved that stage), and the dashboard's "last
+    generated file" download would have nothing stable to point at."""
+    status = _require_job(job_id)
+    out_path = store.JOBS_DIR / job_id / out_name
+    if not out_path.exists():
+        stage = _current_stage(status)
+        if stage is None or stage["type"] != expected_stage_type:
+            raise HTTPException(400, "current stage does not offer this download")
+        if store.is_processing(job_id):
+            raise HTTPException(409, "Wait for the current processing step before downloading")
+        writer(store.get_df(job_id), out_path)
+    return FileResponse(out_path, filename=f"{job_id}_{out_name}")
+
+
 @router.get("/api/jobs/{job_id}/flow1/haider.xlsx")
 def download_flow1_haider(job_id: str):
-    status = _require_job(job_id)
-    stage = _current_stage(status)
-    if stage is None or stage["type"] != "flow1":
-        raise HTTPException(400, "current stage does not offer this download")
-    if store.is_processing(job_id):
-        raise HTTPException(409, "Wait for the current processing step before downloading")
-
-    df = store.get_df(job_id)
-    out_path = store.JOBS_DIR / job_id / "flow1_haider.xlsx"
-    _write_flow1_haider_xlsx(df, out_path)
-    return FileResponse(out_path, filename=f"{job_id}_flow1_haider.xlsx")
+    return _download_frozen_dispatch_file(job_id, "flow1_haider.xlsx", "flow1", _write_flow1_haider_xlsx)
 
 
 @router.get("/api/jobs/{job_id}/flow1/naresh.xlsx")
 def download_flow1_naresh(job_id: str):
-    status = _require_job(job_id)
-    stage = _current_stage(status)
-    if stage is None or stage["type"] != "flow1":
-        raise HTTPException(400, "current stage does not offer this download")
-    if store.is_processing(job_id):
-        raise HTTPException(409, "Wait for the current processing step before downloading")
-
-    df = store.get_df(job_id)
-    out_path = store.JOBS_DIR / job_id / "flow1_naresh.xlsx"
-    _write_flow1_naresh_xlsx(df, out_path)
-    return FileResponse(out_path, filename=f"{job_id}_flow1_naresh.xlsx")
+    return _download_frozen_dispatch_file(job_id, "flow1_naresh.xlsx", "flow1", _write_flow1_naresh_xlsx)
 
 
 # ---- Flow 2: input -> merge -> verify -> dispatch -------------------------
@@ -144,6 +146,20 @@ async def apply_naresh_response(job_id: str, file: UploadFile = File(...)):
                 "id_matched": counts["id_matched"], "dob_matched": counts["dob_matched"],
                 "remaining_invalid_id": remaining_id, "remaining_invalid_dob": remaining_dob,
             },
+            # Naresh's response resolves in one atomic call -- there's no
+            # separate human gate between these -- but the sidebar shows them
+            # as 4 distinct completed sub-steps instead of one opaque
+            # "Flow 2 Dispatch" line, since they're real work that already
+            # happens here, not filler (see flow_merge.apply_naresh_response
+            # for the merge, pipeline.mask_id_only_invalid/mask_dob_invalid
+            # for the two rechecks).
+            "sub_steps": [
+                {"label": "Merge ID & DOB corrections",
+                 "detail": f"{counts['id_matched']} ID, {counts['dob_matched']} DOB account(s) updated"},
+                {"label": "ID Validation", "detail": f"{remaining_id} account(s) still invalid"},
+                {"label": "DOB Validation", "detail": f"{remaining_dob} account(s) still invalid"},
+                {"label": "Dispatch to Haider", "detail": "flow2_haider.xlsx generated"},
+            ],
         })
         st["stage_index"] += 1
         store.set_df(job_id, df)
@@ -154,17 +170,7 @@ async def apply_naresh_response(job_id: str, file: UploadFile = File(...)):
 
 @router.get("/api/jobs/{job_id}/flow2/haider.xlsx")
 def download_flow2_haider(job_id: str):
-    status = _require_job(job_id)
-    stage = _current_stage(status)
-    if stage is None or stage["type"] != "flow2":
-        raise HTTPException(400, "current stage does not offer this download")
-    if store.is_processing(job_id):
-        raise HTTPException(409, "Wait for the current processing step before downloading")
-
-    df = store.get_df(job_id)
-    out_path = store.JOBS_DIR / job_id / "flow2_haider.xlsx"
-    _write_flow2_haider_xlsx(df, out_path)
-    return FileResponse(out_path, filename=f"{job_id}_flow2_haider.xlsx")
+    return _download_frozen_dispatch_file(job_id, "flow2_haider.xlsx", "flow2", _write_flow2_haider_xlsx)
 
 
 # ---- Flow 3: input -> merge -> (final_id_check/default_id, unchanged) -----

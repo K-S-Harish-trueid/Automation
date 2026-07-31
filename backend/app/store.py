@@ -179,8 +179,23 @@ def create_job(raw: bytes, filename: str) -> str:
     }
     _JOBS[job_id] = {"df": df, "status": status}
     persist(job_id)
+    save_raw_upload(job_id, raw, filename)
     enforce_job_capacity(protected_job_id=job_id)
     return job_id
+
+
+def save_raw_upload(job_id: str, raw: bytes, filename: str):
+    """Keep the exact bytes the user uploaded, untouched by `clean` or any
+    later stage -- once parsed into a dataframe the original file is
+    otherwise gone for good, so this is the only way to hand it back later
+    (e.g. from the dashboard's "last generated file" download)."""
+    suffix = Path(filename or "").suffix.lower() or ".csv"
+    (_job_dir(job_id) / f"raw_upload{suffix}").write_bytes(raw)
+
+
+def get_raw_upload_path(job_id: str) -> Path | None:
+    matches = list(_job_dir(job_id).glob("raw_upload.*"))
+    return matches[0] if matches else None
 
 
 def get_df(job_id: str) -> pd.DataFrame:

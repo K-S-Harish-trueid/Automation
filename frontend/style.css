@@ -356,6 +356,17 @@ button.brand-mark:hover:not(:disabled) {
 }
 
 .stage-list li.rewind-target { grid-template-columns: 20px 24px minmax(0, 1fr) auto; }
+
+.stage-substep {
+  grid-template-columns: 14px minmax(0, 1fr);
+  margin-left: 20px;
+  min-height: 28px;
+  padding: 4px 8px;
+  opacity: 0.85;
+}
+.stage-substep .dot { width: 13px; height: 13px; }
+.stage-substep .stage-name { font-size: 10.5px; }
+.stage-substep .stage-status { font-size: 8px; }
 .stage-rewind {
   min-height: 26px;
   padding: 4px 6px;
@@ -886,7 +897,6 @@ input:focus-visible,
 .job-history-table th:nth-child(5), .job-history-table td:nth-child(5) { width: 20%; }
 .job-history-table th:nth-child(6), .job-history-table td:nth-child(6) { width: 18%; }
 .job-history-table td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.job-history-table th:first-child, .job-history-table td:first-child { position: static; box-shadow: none; }
 .job-history-row { cursor: pointer; }
 .job-history-row:hover { background: rgba(79, 140, 255, 0.06); }
 .job-history-row:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: -2px; }
@@ -906,6 +916,10 @@ input:focus-visible,
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
 }
 .job-history-download:hover { text-decoration: underline; }
 

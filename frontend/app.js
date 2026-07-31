@@ -1,6 +1,11 @@
 const API = window.K2_API_BASE || "/api";
 const POLL_MS = window.K2_POLL_INTERVAL_MS || 900;
 
+// Flip to true to show the specific, backend-driven detail lines on stage
+// screens again (row/field counts, per-column instructions, invalid-count
+// notes). Off by default -- these screens show short generic copy instead.
+const STAGE_DETAILS_VERBOSE = false;
+
 let jobId = localStorage.getItem("k2_job_id");
 // Which flow's own stages the sidebar is allowed to show, or null for the
 // unrestricted master view (dashboard / new batch / resuming a job from the
@@ -131,11 +136,10 @@ function setSidebarJobChrome(visible) {
 }
 
 function setJobContextActions(status) {
-  const hasJob = Boolean(jobId && status);
-  // Both buttons are meaningless without an active job -- there's nothing to
-  // jump back to or roll back on the dashboard/new-batch/flow-picker screens,
-  // so hide them there instead of showing a permanently-disabled pair.
-  goToDashboardBtnEl.hidden = !hasJob;
+  // Dashboard is the one consistent way back everywhere -- always visible,
+  // instead of screens (new batch, Flow 2/3 intake) each needing their own
+  // in-card "Back to dashboard" button when this one was hidden.
+  goToDashboardBtnEl.hidden = false;
   // Rollback hidden in the GUI for now -- re-enable by restoring the line
   // below (`rollbackJobBtnEl.hidden = !hasJob;`) in place of the next one.
   // rollbackJobBtnEl.hidden = !hasJob;
@@ -165,7 +169,7 @@ sidebarBrandToggleEl.onclick = () => {
 };
 
 goToDashboardBtnEl.onclick = () => {
-  if (!jobId || isBusy) return;
+  if (isBusy) return;
   setViewScope(null);
   renderDashboard();
 };
@@ -536,6 +540,35 @@ function renderStageList(status) {
     // }
 
     stageListEl.appendChild(li);
+
+    // Naresh's response resolves merge -> ID recheck -> DOB recheck ->
+    // dispatch in one atomic call, but the history entry it appends lands
+    // under stage_id "flow1_dispatch" (that's the gate this action actually
+    // resolves -- see flow.py's file-level comment: routes are grouped by
+    // which flow's action they serve, not which stage_id they resolve). It
+    // shows up here, under flow2_dispatch, since that's the stage this
+    // breakdown is actually explaining -- flow2_dispatch's OWN status is
+    // still "current"/pending its own resolution at this point, so the gate
+    // is "does this history entry with sub_steps exist", not flow2_dispatch's
+    // own status.
+    if (stage.id === "flow2_dispatch") {
+      const historyEntry = [...(status.history || [])].reverse()
+        .find((h) => h.stage_id === "flow1_dispatch" && h.sub_steps);
+      (historyEntry?.sub_steps || []).forEach((sub) => {
+        const subLi = document.createElement("li");
+        subLi.className = "stage-substep done";
+        subLi.title = `${sub.label}: ${sub.detail}`;
+        subLi.setAttribute("aria-label", `${sub.label}: ${sub.detail}`);
+        subLi.innerHTML = `
+          <span class="dot"></span>
+          <span class="stage-text">
+            <span class="stage-name">${escapeHtml(sub.label)}</span>
+            <span class="stage-status">${escapeHtml(sub.detail)}</span>
+          </span>
+        `;
+        stageListEl.appendChild(subLi);
+      });
+    }
   });
 }
 
@@ -702,7 +735,6 @@ function renderNewBatch() {
   setJobContextActions(null);
   setCard(`
     <div class="stage-intro upload-stage-intro">
-      <button class="secondary quiet-action back-to-dashboard" id="backToDashboardBtn" type="button">&larr; Back to dashboard</button>
       <h2>Start data preparation</h2>
     </div>
     <div class="upload-simple-layout">
@@ -716,7 +748,6 @@ function renderNewBatch() {
     </div>
   `);
 
-  document.getElementById("backToDashboardBtn").onclick = () => renderDashboard();
   document.getElementById("backToDashboardBtn2").onclick = () => renderDashboard();
   wireFilePicker("fileInput", "rawFileZone", "rawFileName", previewRawUpload);
 
@@ -797,13 +828,11 @@ function renderFlowIntakePage(config) {
 async function renderFlowUploadStep(config) {
   setCard(`
     <div class="stage-intro upload-stage-intro">
-      <button class="secondary quiet-action back-to-dashboard" id="backToDashboardBtn" type="button">&larr; Back to dashboard</button>
       <h2>${escapeHtml(config.title)}</h2>
       <p class="muted">${escapeHtml(config.description)}</p>
     </div>
     <div id="flowIntakeBody"><p class="muted"><span class="mini-spinner"></span>Loading eligible jobs…</p></div>
   `);
-  document.getElementById("backToDashboardBtn").onclick = () => renderDashboard();
 
   const body = document.getElementById("flowIntakeBody");
   let jobs;
@@ -930,12 +959,17 @@ function renderFlow3Page() {
   });
 }
 
-function resumeJob(jobIdToResume) {
+// Reopening a finished job from the dashboard's job list should land on the
+// same scoped view it finished in (Naresh/Haider's flows all funnel into
+// Flow 3 before "done", so `resumeFlow` is Flow 3 for every done job) rather
+// than the full unscoped sidebar. In-progress jobs still open unscoped --
+// the operator resuming mid-pipeline work wants the whole roadmap visible.
+function resumeJob(jobIdToResume, resumeFlow) {
   if (isBusy || !jobIdToResume) return;
   jobId = jobIdToResume;
   localStorage.setItem("k2_job_id", jobId);
   knownHistoryCount = null;
-  setViewScope(null);
+  setViewScope(resumeFlow || null);
   refresh(true);
 }
 
@@ -962,12 +996,45 @@ function jobFlowCellMarkup(job) {
   return `Flow ${job.flow}`;
 }
 
+// What "download" means for a job depends on how far it's gotten: the most
+// recently frozen artifact, one step behind wherever it currently sits (the
+// in-progress screens for flow1/flow2_dispatch already offer their own
+// direct download buttons for the CURRENT flow's files -- this is for
+// getting back whatever came before that, which otherwise has no other way
+// to be recovered once the job has moved on. See flow.py's
+// _download_frozen_dispatch_file and store.py's raw_upload persistence).
+function jobDownloadTargets(job) {
+  const base = `${API}/jobs/${job.job_id}`;
+  if (job.is_done) return { label: "Final output", urls: [`${base}/download`] };
+  if (job.flow === 3) return { label: "Flow 2 files", urls: [`${base}/flow2/haider.xlsx`] };
+  if (job.flow === 2) return { label: "Flow 1 files", urls: [`${base}/flow1/haider.xlsx`, `${base}/flow1/naresh.xlsx`] };
+  return { label: "Raw upload", urls: [`${base}/raw-upload`] };
+}
+
+// Fires one browser download per URL from a single click. Not zipped -- a
+// job history row can point at Flow 1's two separate reviewer-addressed
+// files (Haider's, Naresh's), and collapsing those into one archive would
+// hide a distinction the operator actually needs to see. Staggered slightly
+// since firing multiple downloads in the same tick makes some browsers
+// treat it like a popup flood and silently block everything after the first.
+function triggerStaggeredDownloads(urls) {
+  urls.forEach((url, i) => {
+    setTimeout(() => {
+      const a = document.createElement("a");
+      a.href = url;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }, i * 400);
+  });
+}
+
 function jobHistoryRowMarkup(job) {
   const rowCount = job.row_count != null ? Number(job.row_count).toLocaleString() : "—";
-  const downloadCell = job.is_done
-    ? `<a href="${API}/jobs/${job.job_id}/download" class="job-history-download">Download</a>`
-    : "";
-  return `<tr class="job-history-row" data-resume-job="${escapeHtml(job.job_id)}" tabindex="0">
+  const downloadTargets = jobDownloadTargets(job);
+  const downloadCell = `<button type="button" class="job-history-download" data-download-urls="${escapeHtml(JSON.stringify(downloadTargets.urls))}">${escapeHtml(downloadTargets.label)}</button>`;
+  return `<tr class="job-history-row" data-resume-job="${escapeHtml(job.job_id)}" data-resume-flow="${job.is_done ? (job.flow ?? "") : ""}" tabindex="0">
     <td class="mono">${escapeHtml(job.job_id)}</td>
     <td title="${escapeHtml(job.filename || "")}">${escapeHtml(job.filename || "")}</td>
     <td>${rowCount}</td>
@@ -1021,17 +1088,21 @@ function renderJobHistoryTable() {
   }).join("");
   wrap.innerHTML = `
     <table class="job-history-table">
-      <thead><tr><th>Job</th><th>File</th><th>Rows</th><th>Flow</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Job</th><th>File</th><th>Rows</th><th>Flow</th><th>Status</th><th>Downloads</th></tr></thead>
       <tbody>${bodyHtml}</tbody>
     </table>
   `;
-  wrap.querySelectorAll(".job-history-download").forEach((link) => {
-    link.addEventListener("click", (event) => event.stopPropagation());
+  wrap.querySelectorAll(".job-history-download").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      triggerStaggeredDownloads(JSON.parse(btn.dataset.downloadUrls || "[]"));
+    });
   });
   wrap.querySelectorAll("[data-resume-job]").forEach((row) => {
-    row.addEventListener("click", () => resumeJob(row.dataset.resumeJob));
+    const resumeFlow = row.dataset.resumeFlow ? Number(row.dataset.resumeFlow) : null;
+    row.addEventListener("click", () => resumeJob(row.dataset.resumeJob, resumeFlow));
     row.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); resumeJob(row.dataset.resumeJob); }
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); resumeJob(row.dataset.resumeJob, resumeFlow); }
     });
   });
 }
@@ -1096,10 +1167,12 @@ function renderUploadStage(current) {
   // current.label (the short subtitle rendered above) already names the
   // expected file and its matching key -- this second line only adds
   // whatever that one didn't cover, instead of restating it.
-  const description = [
-    overwriteCount ? `Updates ${overwriteCount} field(s)` : null,
-    guidance.duplicate_handling,
-  ].filter(Boolean).join(" — ");
+  const description = STAGE_DETAILS_VERBOSE
+    ? [
+        overwriteCount ? `Updates ${overwriteCount} field(s)` : null,
+        guidance.duplicate_handling,
+      ].filter(Boolean).join(" — ")
+    : "";
   setCard(`
     <div class="stage-intro">
       <span class="stage-kicker">Data source required</span>
@@ -1107,7 +1180,7 @@ function renderUploadStage(current) {
       <p class="muted">${escapeHtml(current.label)}</p>
     </div>
     <div class="upload-simple-layout">
-      <p class="muted">${escapeHtml(description)}</p>
+      ${description ? `<p class="muted">${escapeHtml(description)}</p>` : ""}
       ${filePickerMarkup("refFileInput", "referenceFileZone", "referenceFileName", `Select ${expectedFile.toLowerCase()}`, "CSV, XLSX, or XLS")}
     </div>
     <div class="row-actions">
@@ -1142,7 +1215,7 @@ function renderConfirmStage(current) {
       <div class="decision-info">
         <div class="decision-info-row">
           <span class="guidance-icon guidance-icon-art">${detailIconMarkup("identity", "guidance-detail-icon")}</span>
-          <p class="decision-copy">${escapeHtml(current.summary)}</p>
+          <p class="decision-copy">${escapeHtml(STAGE_DETAILS_VERBOSE ? current.summary : "This step will apply the pending changes and continue.")}</p>
         </div>
       </div>
       <div class="row-actions">
@@ -1172,7 +1245,7 @@ function renderFlowWaitStage(current) {
     ? "Naresh's response is uploaded on the Flow 2 page"
     : "Haider's response is uploaded on the Flow 3 page";
   const stillInvalid = (current.invalid_id_count || 0) + (current.invalid_dob_count || 0);
-  const invalidNote = isFlow1
+  const invalidNote = !STAGE_DETAILS_VERBOSE || isFlow1
     ? ""
     : stillInvalid > 0
       ? `<p class="muted">${current.invalid_id_count} account(s) still have an invalid ID and ${current.invalid_dob_count} an invalid DOB — that's what's in the Flow 2 file above.</p>`
@@ -1180,10 +1253,9 @@ function renderFlowWaitStage(current) {
   const nextLabel = isFlow1 ? "Next: Flow 2" : "Next: Flow 3";
   setCard(`
     <div class="stage-intro upload-stage-intro">
-      <button class="secondary quiet-action back-to-dashboard" id="backToDashboardBtn" type="button">&larr; Back to dashboard</button>
       <span class="stage-kicker">Share checkpoint</span>
       <h2>${escapeHtml(current.title)}</h2>
-      <p class="muted">Download the file(s) below (${current.row_count} rows) and share them manually. This job stays parked here until ${waitingOn}.</p>
+      <p class="muted">Download the file(s) below and share them manually. This job stays parked here until ${waitingOn}.</p>
       ${invalidNote}
     </div>
     <div class="row-actions">
@@ -1193,7 +1265,6 @@ function renderFlowWaitStage(current) {
       <button id="flowNextBtn" type="button">${iconMarkup("play")}<span>${nextLabel}</span></button>
     </div>
   `);
-  document.getElementById("backToDashboardBtn").onclick = () => renderDashboard();
   downloads.forEach((d, i) => {
     document.getElementById(`flowDownloadBtn${i}`).onclick = () => { window.location.href = d.href; };
   });
@@ -1407,7 +1478,7 @@ function renderManualEditStage(current) {
         <h2>${escapeHtml(current.title)}</h2>
         <span class="badge">${current.total_flagged} flagged</span>
       </div>
-      <p class="muted">${escapeHtml(current.instructions)}</p>
+      <p class="muted">${escapeHtml(STAGE_DETAILS_VERBOSE ? current.instructions : "These accounts are flagged for review. Download the workbook below, fix them, and upload it back here.")}</p>
     </div>
     <div class="review-toolbar">
       <div class="review-stat"><span class="review-stat-label">Page</span><span class="review-stat-value">${current.page} of ${current.page_count}</span></div>
