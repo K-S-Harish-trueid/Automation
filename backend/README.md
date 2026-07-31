@@ -160,8 +160,8 @@ stops on the others until the frontend (or an API call) resolves them.
 | 5 | `id_dob_validate` | manual_edit | Flags invalid `ID_TYPE`/`ID_NUMBER`/DoB for inline correction |
 | 6 | `address_fix` | auto | Auto-fills accounts with a missing address, an address with no letters at all (e.g. a phone number or placeholder), or an exact match against a known-junk denylist (e.g. "JUNE", a single letter) — replacement pulled from a Baghdad/province address pool, ported from the legacy `pah3.py` script. Rows whose province has no pool entry are left invalid, with no later step re-checking them — see `rules/06-address_fix.txt` |
 | 7 | `mobile_fill` | manual_edit | Flags accounts with no phone number (blank, `XXX_NOT_COLLECTED_XXX`, or all-zero) for inline entry |
-| 8 | `flow1_dispatch` | flow1 | Parks the job and hands out two files: `flow1_haider.xlsx` (Name/DOB/Mobile flagged rows + a blank CMS sheet for every account) and `flow1_naresh.xlsx` (every currently ID-invalid row). Advanced externally by the Flow 2 page once Naresh's response is uploaded — see "Flow 1/2/3 reviewer handoff" below |
-| 9 | `flow2_dispatch` | flow2 | Parks the job and hands out `flow2_haider.xlsx` (only the ID rows still invalid after Naresh's fixes). Advanced externally by the Flow 3 page once Haider's response(s) are uploaded |
+| 8 | `flow1_dispatch` | flow1 | Parks the job and hands out two files: `flow1_haider.xlsx` (Name/Mobile flagged rows + a blank CMS sheet for every account) and `flow1_naresh.xlsx` (ID Corrections + DOB Mistakes sheets, every currently invalid row of each). Advanced externally by the Flow 2 page once Naresh's response is uploaded — see "Flow 1/2/3 reviewer handoff" below |
+| 9 | `flow2_dispatch` | flow2 | Parks the job and hands out `flow2_haider.xlsx` (ID Corrections + DOB Mistakes sheets, only the rows still invalid after Naresh's fixes). Advanced externally by the Flow 3 page once Haider's response(s) are uploaded |
 | 10 | `final_id_check` | manual_edit | Last pass on any still-invalid IDs (part of Flow 3's own tail, not a separate trip) |
 | 11 | `default_id` | confirm | Assigns a random 8-digit ID (`00######`) + `Civil Id` type to whatever is still invalid (also Flow 3's tail — the frontend renders this straight off the Flow 3 upload, same shared confirm screen used everywhere else) |
 | 12 | `done` | done | Final dataset ready to download (Flow 3's last stage) |
@@ -202,11 +202,11 @@ a background thread. Poll `/progress` until it stops reporting
 | `POST /jobs/{id}/upload` | multipart `file` — resolve an `upload` stage in the background |
 | `POST /jobs/{id}/skip` | Skip the current stage without doing its normal action (only stages marked `skippable`: currently just `replace`) |
 | `POST /jobs/{id}/submit` | `{ edits: [{row_key, field, value}], force_advance }` — resolve a `manual_edit` stage in the background |
-| `GET /jobs/{id}/flow1/haider.xlsx` | Download Haider's Flow 1 file (Name/DOB/Mobile flagged rows + blank CMS sheet) while parked at `flow1_dispatch`; repeatable, no side effects |
-| `GET /jobs/{id}/flow1/naresh.xlsx` | Download Naresh's Flow 1 file (every currently ID-invalid row) while parked at `flow1_dispatch`; repeatable, no side effects |
-| `POST /jobs/{id}/flow2/naresh-response` | multipart `file` — Flow 2's merge step: apply Naresh's returned ID corrections, advance from `flow1_dispatch` to `flow2_dispatch` |
-| `GET /jobs/{id}/flow2/haider.xlsx` | Download Flow 2's dispatch file for Haider (only IDs still invalid after Naresh's fixes) while parked at `flow2_dispatch`; repeatable, no side effects |
-| `POST /jobs/{id}/flow3/haider-response` | multipart `corrections_file` + optional `ids_file` — Flow 3's merge step: apply both of Haider's returned files (Name/DOB/Mobile/CMS, then IDs if provided), advance past `flow2_dispatch` into `final_id_check`/`default_id` |
+| `GET /jobs/{id}/flow1/haider.xlsx` | Download Haider's Flow 1 file (Name/Mobile flagged rows + blank CMS sheet) while parked at `flow1_dispatch`; repeatable, no side effects |
+| `GET /jobs/{id}/flow1/naresh.xlsx` | Download Naresh's Flow 1 file (ID Corrections + DOB Mistakes sheets, every currently invalid row of each) while parked at `flow1_dispatch`; repeatable, no side effects |
+| `POST /jobs/{id}/flow2/naresh-response` | multipart `file` (2 sheets: ID Corrections, DOB Mistakes) — Flow 2's merge step: apply Naresh's returned ID and DOB corrections, advance from `flow1_dispatch` to `flow2_dispatch` |
+| `GET /jobs/{id}/flow2/haider.xlsx` | Download Flow 2's dispatch file for Haider (ID Corrections + DOB Mistakes sheets, only rows still invalid after Naresh's fixes) while parked at `flow2_dispatch`; repeatable, no side effects |
+| `POST /jobs/{id}/flow3/haider-response` | multipart `corrections_file` (Name/Mobile/CMS, no DOB) + optional `ids_file` (ID Corrections + DOB Mistakes second pass) — Flow 3's merge step: apply both of Haider's returned files, advance past `flow2_dispatch` into `final_id_check`/`default_id` |
 | `POST /jobs/{id}/confirm` | Resolve a `confirm` stage in the background |
 | `GET /jobs/{id}/download` | Download the final dataset as `{job_id}_final.xlsx` once the job reaches `done` |
 | `GET /jobs/{id}/audit/download` | Download the audit trail as `{job_id}_audit.xlsx` |
@@ -233,30 +233,36 @@ one is its own input → merge → verify → dispatch mini-pipeline), matched b
 provides a non-blank value (a reviewer not fixing every row is expected, not
 an error):
 
+DOB travels with IDs, not with Name/Mobile/CMS: Naresh gets first crack at
+both (one workbook, ID Corrections + DOB Mistakes sheets), and whatever he
+can't resolve of either gets dispatched to Haider as a second-pass file in
+the same 2-sheet shape. Haider's own corrections file only ever carries
+Name/Mobile/CMS.
+
 1. **Flow 1** (`flow1_dispatch`, in the normal job wizard): download
-   `flow1_haider.xlsx` (Name Validation / DOB Mistakes / Missing Mobile
-   Numbers sheets, cut down to currently-flagged rows, plus a CMS Data
-   Integration sheet listing every account with blank `CMS_UPDATE_COLS` for
-   Haider to fill in by hand) and `flow1_naresh.xlsx` (every currently
-   ID-invalid row). Share both manually; Flow 1 stops here for good — nothing
-   advances it further from inside Flow 1 itself.
+   `flow1_haider.xlsx` (Name Validation / Missing Mobile Numbers sheets, cut
+   down to currently-flagged rows, plus a CMS Data Integration sheet listing
+   every account with blank `CMS_UPDATE_COLS` for Haider to fill in by hand)
+   and `flow1_naresh.xlsx` (ID Corrections + DOB Mistakes sheets, every
+   currently invalid row of each). Share both manually; Flow 1 stops here
+   for good — nothing advances it further from inside Flow 1 itself.
 2. **Flow 2** (a separate page, its job picker only listing jobs parked at
-   `flow1_dispatch`): input Naresh's completed file, merge his ID fixes,
-   recheck ID validity, dispatch — `POST /flow2/naresh-response` does all of
+   `flow1_dispatch`): input Naresh's completed file, merge his ID and DOB
+   fixes, recheck both, dispatch — `POST /flow2/naresh-response` does all of
    that in one call and advances the job to `flow2_dispatch`, generating
-   `flow2_haider.xlsx` from just the rows still invalid. Once applied, the
-   page hands the job back to the normal wizard, which renders Flow 2's own
-   dispatch screen (same one you'd see resuming the job normally) with a
-   "Next: Flow 3" shortcut.
+   `flow2_haider.xlsx` (same 2-sheet shape) from just the rows still
+   invalid. Once applied, the page hands the job back to the normal wizard,
+   which renders Flow 2's own dispatch screen (same one you'd see resuming
+   the job normally) with a "Next: Flow 3" shortcut.
 3. **Flow 3** (a separate page, its job picker only listing jobs parked at
    `flow2_dispatch`): input Haider's two files, merge them into the raw
-   data — `POST /flow3/haider-response` applies his corrections (Name/DOB/
-   Mobile/CMS) and his IDs response (if the job still needs one; optional
-   otherwise) in one call. The job then proceeds into the unchanged
-   `final_id_check` (auto-bypassed, as always) and lands on the existing
-   `default_id` confirm gate — Flow 3 hands the job to the normal wizard at
-   this point too, so the confirm-click and final-output screens the
-   operator sees are the *same shared screens* every job uses, not a
+   data — `POST /flow3/haider-response` applies his corrections (Name/
+   Mobile/CMS) and his ID+DOB second-pass response (if the job still needs
+   one; optional otherwise) in one call. The job then proceeds into the
+   unchanged `final_id_check` (auto-bypassed, as always) and lands on the
+   existing `default_id` confirm gate — Flow 3 hands the job to the normal
+   wizard at this point too, so the confirm-click and final-output screens
+   the operator sees are the *same shared screens* every job uses, not a
    separate copy.
 
 See `app/pipeline/flow_merge.py` for the merge logic and

@@ -52,7 +52,13 @@ dispatch), not one continuous line — Flow 1 stops for good once it dispatches;
 Flow 2 and Flow 3 are separate pages, each with its own job picker, and once
 their upload is applied the job is handed straight to the normal wizard
 (Flow 2 lands back on its own dispatch screen; Flow 3 lands on the existing
-confirm → final output screens):
+confirm → final output screens).
+
+DOB travels with IDs, not with Name/Mobile/CMS: Naresh gets first crack at
+both ID and DOB fixes (one workbook, 2 sheets), and whatever he can't resolve
+of either gets dispatched to Haider as a second-pass file — the same 2-sheet
+shape, just cut down to what's still invalid. Haider's own corrections file
+only ever carries Name/Mobile/CMS.
 
 - **`init/`** — `dummy_raw.csv` + `dummy_replace_reference.xlsx`, for
   starting a brand-new job (Flow 1). **Skip the `replace` stage** (don't
@@ -62,16 +68,18 @@ confirm → final output screens):
   (Uploading it instead is a fine way to test `replace` on its own, just
   don't expect the flow files to line up with the fixtures below afterward.)
 - **`flow2/naresh_response.xlsx`** — upload on the Flow 2 page once the job
-  reaches Flow 1 Dispatch. Fixes the ID on 9000006 and 9000007; leaves
-  9000017 and 9000020 blank (Naresh can't resolve those two, matching
+  reaches Flow 1 Dispatch. 2 sheets: **ID Corrections** fixes 9000006 and
+  9000007, leaves 9000017/9000020 blank; **DOB Mistakes** fixes 9000008 and
+  9000010, leaves 9000009 blank (Naresh can't resolve those, matching
   "Naresh does what he can, Haider gets the rest").
-- **`flow3/haider_corrections_response.xlsx`** + **`flow3/haider_ids_response.xlsx`**
-  — upload together on the Flow 3 page once the job reaches Flow 2 Dispatch.
-  Fixes Name (9000003/4/5), DOB (9000008, 9000010), Mobile (9000015,
-  9000016), CMS (9000001, 9000018, 9000019), and — in the IDs file — the ID
-  on 9000017; deliberately leaves 9000017's name/mobile and 9000020's
-  DOB/mobile/ID blank to demonstrate that a blank cell means "no change",
-  never "clear this field".
+- **`flow3/haider_corrections_response.xlsx`** (Name/Mobile/CMS, no DOB) +
+  **`flow3/haider_ids_response.xlsx`** (ID Corrections + DOB Mistakes,
+  Naresh's leftovers) — upload together on the Flow 3 page once the job
+  reaches Flow 2 Dispatch. Fixes Name (9000003/4/5), Mobile (9000015,
+  9000016), CMS (9000001, 9000018, 9000019), and in the second-pass file the
+  ID on 9000017 and the DOB on 9000009; deliberately leaves 9000017's
+  name/mobile and 9000020's DOB/mobile/ID blank to demonstrate that a blank
+  cell means "no change", never "clear this field".
 
 Expected end state: every account resolves except **9000020**, which reaches
 the `default_id` confirm gate (now surfaced directly inside Flow 3, not a

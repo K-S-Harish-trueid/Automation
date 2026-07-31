@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from .. import pipeline, store
 from ..background import _run_in_background
 from ..helpers import (
+    VALIDATION_NOTES,
     _append_audit_events,
     _autofit_worksheet,
     _current_stage,
@@ -69,9 +70,10 @@ def current_stage_detail(job_id: str, page: int = 1):
         }
         if stage["type"] == "flow2":
             # Lets the wait screen (and Flow 3) tell the operator whether
-            # there's anything left for Haider's IDs file to fix -- if this
-            # is 0, Flow 3 doesn't need an IDs file for this job at all.
-            payload["invalid_count"] = int(pipeline.mask_id_only_invalid(df).sum())
+            # there's anything left for Haider's second-pass file to fix --
+            # if both are 0, Flow 3 doesn't need that file for this job at all.
+            payload["invalid_id_count"] = int(pipeline.mask_id_only_invalid(df).sum())
+            payload["invalid_dob_count"] = int(pipeline.mask_dob_invalid(df).sum())
         return payload
 
     if stage["type"] == "confirm":
@@ -278,8 +280,9 @@ def download_workbook(job_id: str):
             mask = cfg["validator"](df)
             flagged = df.loc[mask, cfg["context_cols"] + cfg["editable_cols"]].copy()
             flagged.insert(0, "row_key", flagged.index)
-            reasons = cfg["reasons"](df)
-            flagged["validation_notes"] = [", ".join(reasons.get(int(k), [])) for k in flagged["row_key"]]
+            if VALIDATION_NOTES:
+                reasons = cfg["reasons"](df)
+                flagged["validation_notes"] = [", ".join(reasons.get(int(k), [])) for k in flagged["row_key"]]
             sheet_name = stage["title"][:31]
             flagged.to_excel(writer, sheet_name=sheet_name, index=False)
             _autofit_worksheet(writer.sheets[sheet_name], flagged)

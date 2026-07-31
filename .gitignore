@@ -11,3 +11,7 @@ llms/data/
 TODO
 Current Run/
 dummy_data/Historical_Dataset.xlsx
+frontend_backup_*/
+testing/
+dummy_data/downloads/
+ngrok_live.log

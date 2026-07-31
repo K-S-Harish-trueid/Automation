@@ -388,6 +388,7 @@ def list_job_summaries(stage_id: str | None = None) -> list[dict]:
             "created_at": status.get("created_at"),
             "stage_id": stage["id"] if stage else "done",
             "stage_title": stage["title"] if stage else "Final Output",
+            "flow": stage.get("flow") if stage else None,
             "stage_index": stage_index,
             "total_stages": len(stages),
             "is_done": _is_done(status),

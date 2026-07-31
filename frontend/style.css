@@ -220,6 +220,7 @@ button.brand-mark:hover:not(:disabled) {
 
 .eyebrow,
 .sidebar-label,
+.stage-group-header,
 .main-context,
 .stage-kicker,
 .busy-kicker {
@@ -311,6 +312,15 @@ button.brand-mark:hover:not(:disabled) {
 }
 
 .stage-list::-webkit-scrollbar { display: none; }
+
+.stage-group-header {
+  margin: 10px 8px 2px;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stage-group-header:first-child { margin-top: 2px; }
 
 .stage-list li {
   display: grid;
@@ -544,7 +554,11 @@ button.brand-mark:hover:not(:disabled) {
 
 .context-action:disabled {
   cursor: not-allowed;
-  opacity: 0.72;
+  opacity: 0.4;
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--border-soft);
+  box-shadow: none;
+  filter: grayscale(0.5);
 }
 
 .context-rollback:not(:disabled) {
@@ -834,8 +848,44 @@ input:focus-visible,
 }
 
 .job-history { margin-top: 36px; }
+.job-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.job-history-filters input,
+.job-history-filters select {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.job-history-filters input { flex: 1 1 220px; min-width: 160px; }
+.job-history-filters select { flex: 0 1 160px; }
+.job-history-filters input:focus-visible,
+.job-history-filters select:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
 .job-history-wrap { max-height: 46vh; }
-.job-history-table { width: 100%; min-width: 0; }
+/* table-layout:fixed + explicit per-column widths so columns line up
+   consistently regardless of how much (or little) data is in them --
+   "auto" layout left large, uneven gaps between columns when the list only
+   had a row or two. min-width keeps columns legible on narrow screens
+   instead of squishing; .job-history-wrap already scrolls horizontally
+   when the table exceeds it. */
+.job-history-table { width: 100%; min-width: 640px; table-layout: fixed; }
+.job-history-table th:nth-child(1), .job-history-table td:nth-child(1) { width: 15%; }
+.job-history-table th:nth-child(2), .job-history-table td:nth-child(2) { width: 27%; }
+.job-history-table th:nth-child(3), .job-history-table td:nth-child(3) { width: 10%; }
+.job-history-table th:nth-child(4), .job-history-table td:nth-child(4) { width: 10%; }
+.job-history-table th:nth-child(5), .job-history-table td:nth-child(5) { width: 20%; }
+.job-history-table th:nth-child(6), .job-history-table td:nth-child(6) { width: 18%; }
+.job-history-table td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-history-table th:first-child, .job-history-table td:first-child { position: static; box-shadow: none; }
 .job-history-row { cursor: pointer; }
 .job-history-row:hover { background: rgba(79, 140, 255, 0.06); }
@@ -1502,7 +1552,12 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
 }
 
 @media (max-width: 860px) {
-  .layout { grid-template-columns: 1fr; }
+  /* Sidebar and main stack into 2 separate grid rows below this width --
+     without this, min-height:100vh on .layout (needed so the sidebar reaches
+     full height in the normal side-by-side desktop layout) stretches both
+     stacked rows to fill the viewport too, opening a large dead gap between
+     them whenever their combined content is shorter than the screen. */
+  .layout { grid-template-columns: 1fr; align-content: start; }
   .layout.sidebar-collapsed { grid-template-columns: 1fr; }
   .sidebar { min-height: auto; padding: 20px; border-right: 0; border-bottom: 1px solid var(--border-soft); }
   .sidebar::before { display: none; }
@@ -1517,6 +1572,10 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
   .stage-list,
   .layout.sidebar-collapsed .stage-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stage-list li { min-height: 46px; }
+  /* Group headers ("Flow 1" etc.) are plain text rows, not a stage tile --
+     let them span both columns as a section label instead of squeezing into
+     one grid cell next to a stage tile. */
+  .stage-group-header { grid-column: 1 / -1; }
   .sidebar-footer { display: none; }
   .main { padding: 24px 20px 36px; }
   .upload-simple-layout { grid-template-columns: 1fr; gap: 16px; }
@@ -1536,6 +1595,15 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
   .progress-panel { margin-bottom: 10px; padding: 10px; }
   .progress-header { margin-bottom: 8px; }
   .sidebar-label { display: none; }
+  /* Icon-only strip has no room for a text section label, and stage names
+     themselves are already hidden at this width (below) -- a bare "Flow 1"
+     text row would be the only text left, squeezed into a 28px tile and
+     wrapping badly, so it's dropped entirely rather than half-rendered. */
+  /* Specificity note: .stage-list li (below) also sets display:grid on
+     every <li> including this one, at higher specificity than a bare
+     .stage-group-header selector would have -- .stage-list .stage-group-header
+     needs the extra class to actually win and hide it. */
+  .stage-list .stage-group-header { display: none; }
   .stage-list,
   .layout.sidebar-collapsed .stage-list {
     display: flex;

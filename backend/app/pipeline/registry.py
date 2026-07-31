@@ -23,8 +23,8 @@ def validate_upload_inputs(stage_id: str, df, ref_df):
 
 
 STAGES = [
-    {"id": "clean", "title": "Initial Data Cleaning", "type": "auto"},
-    {"id": "replace", "title": "Data Consistency Update", "type": "upload", "skippable": True,
+    {"id": "clean", "title": "Initial Data Cleaning", "type": "auto", "flow": 1},
+    {"id": "replace", "title": "Data Consistency Update", "type": "upload", "skippable": True, "flow": 1,
      "upload_label": "Historical override file (matches on ACCOUNT_NUMBER, e.g. K2_DATA_PAH_....xlsx)",
      "upload_guidance": {
          "expected_file": "Historical replacement export",
@@ -34,16 +34,16 @@ STAGES = [
          "duplicate_handling": "The last row for each duplicated ACCOUNT_NUMBER is used.",
          "unresolved_label": "Accounts not found in this file keep their current values.",
      }},
-    {"id": "reset_cms", "title": "Reset CMS Fields", "type": "auto"},
-    {"id": "name_validate", "title": "Name Validation", "type": "manual_edit"},
-    {"id": "id_dob_validate", "title": "ID & DoB Validation", "type": "manual_edit"},
-    {"id": "address_fix", "title": "Address Auto-Fix", "type": "auto"},
-    {"id": "mobile_fill", "title": "Missing Mobile Numbers", "type": "manual_edit"},
-    {"id": "flow1_dispatch", "title": "Flow 1 Dispatch", "type": "flow1"},
-    {"id": "flow2_dispatch", "title": "Flow 2 Dispatch", "type": "flow2"},
-    {"id": "final_id_check", "title": "Final ID Validation", "type": "manual_edit"},
-    {"id": "default_id", "title": "Default ID Assignment", "type": "confirm"},
-    {"id": "done", "title": "Final Output", "type": "done"},
+    {"id": "reset_cms", "title": "Reset CMS Fields", "type": "auto", "flow": 1},
+    {"id": "name_validate", "title": "Name Validation", "type": "manual_edit", "flow": 1},
+    {"id": "id_dob_validate", "title": "ID & DoB Validation", "type": "manual_edit", "flow": 1},
+    {"id": "address_fix", "title": "Address Auto-Fix", "type": "auto", "flow": 1},
+    {"id": "mobile_fill", "title": "Missing Mobile Numbers", "type": "manual_edit", "flow": 1},
+    {"id": "flow1_dispatch", "title": "Flow 1 Dispatch", "type": "flow1", "flow": 1},
+    {"id": "flow2_dispatch", "title": "Flow 2 Dispatch", "type": "flow2", "flow": 2},
+    {"id": "final_id_check", "title": "Final ID Validation", "type": "manual_edit", "flow": 3},
+    {"id": "default_id", "title": "Default ID Assignment", "type": "confirm", "flow": 3},
+    {"id": "done", "title": "Final Output", "type": "done", "flow": 3},
 ]
 
 AUTO_HANDLERS = {

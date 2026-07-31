@@ -8,6 +8,10 @@ from . import pipeline, store
 from .pipeline import flow_merge
 from .schemas import EditItem
 
+# Flip to True to include the validation_notes column in exported Excel
+# sheets (flow handoff files + manual review workbook). Off by default.
+VALIDATION_NOTES: bool = False
+
 
 def _autofit_worksheet(worksheet, df: pd.DataFrame, *, min_width: int = 8, max_width: int = 60) -> None:
     """Size each column to its content instead of Excel's default fixed
@@ -103,12 +107,18 @@ def _history_metrics(status: dict, stage_id: str) -> dict:
 
 def _quality_summary(df: pd.DataFrame, status: dict) -> dict:
     audit = status.get("audit", [])
+    # A real correction now comes from Flow 2/3 (Naresh/Haider) or, if
+    # manual-edit stages are ever re-enabled, an operator's inline edit --
+    # never from a fixed stage id or exact label string, both of which
+    # stopped matching once corrections moved off the old per-field manual
+    # stages. Every audit event records who made it, so "not System" is the
+    # one signal that still means "a person actually fixed this."
     names_corrected = len({event["row_key"] for event in audit
-                           if event.get("stage") == "name_validate" and event.get("label") == "Operator corrected"})
+                           if event.get("field") in flow_merge.NAME_COLS and event.get("operator") != "System"})
     generated_ids = len({event["row_key"] for event in audit
                          if event.get("stage") == "default_id" and event.get("field") == "ID_NUMBER"})
     operator_corrections = len({(event["row_key"], event["field"]) for event in audit
-                                if event.get("label") == "Operator corrected"})
+                                if event.get("operator") != "System"})
     cms = _history_metrics(status, "cms_integration")
     remaining = {
         "invalid_names_remaining": int(pipeline.mask_name_invalid(df).sum()),
@@ -144,25 +154,23 @@ def _write_filtered_sheet(writer, sheet_name: str, df: pd.DataFrame, mask: pd.Se
     is there."""
     sheet_df = df.loc[mask]
     sheet = sheet_df[["ACCOUNT_NUMBER", *cols]].copy()
-    reasons = reasons_fn(df)
-    sheet["validation_notes"] = [", ".join(reasons.get(int(k), [])) for k in sheet_df.index]
+    if VALIDATION_NOTES:
+        reasons = reasons_fn(df)
+        sheet["validation_notes"] = [", ".join(reasons.get(int(k), [])) for k in sheet_df.index]
     sheet.to_excel(writer, sheet_name=sheet_name, index=False)
     _autofit_worksheet(writer.sheets[sheet_name], sheet)
 
 
 def _write_flow1_haider_xlsx(df: pd.DataFrame, out_path) -> None:
-    """Flow 1 dispatch file for Haider: Name/DOB/Mobile sheets cut down to
+    """Flow 1 dispatch file for Haider: Name/Mobile sheets cut down to
     currently-flagged rows, plus a CMS Data Integration sheet listing every
     account with the CMS columns blank for him to fill in by hand -- CMS is
-    no longer an automated upload merge, Haider is the sole source now."""
+    no longer an automated upload merge, Haider is the sole source now. DOB
+    goes to Naresh instead (_write_ids_and_dob_xlsx below), not here."""
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         _write_filtered_sheet(
             writer, flow_merge.SHEET_NAME_VALIDATE, df, pipeline.mask_name_invalid(df),
             flow_merge.NAME_COLS, pipeline.validation_reasons_name,
-        )
-        _write_filtered_sheet(
-            writer, flow_merge.SHEET_DOB_MISTAKES, df, pipeline.mask_dob_invalid(df),
-            flow_merge.DOB_COLS, pipeline.validation_reasons_dob_only,
         )
         _write_filtered_sheet(
             writer, flow_merge.SHEET_MISSING_MOBILE, df, pipeline.mask_mobile_missing(df),
@@ -176,22 +184,28 @@ def _write_flow1_haider_xlsx(df: pd.DataFrame, out_path) -> None:
         _autofit_worksheet(writer.sheets[flow_merge.SHEET_CMS], cms_sheet)
 
 
-def _write_ids_only_xlsx(df: pd.DataFrame, out_path, sheet_name: str) -> None:
+def _write_ids_and_dob_xlsx(df: pd.DataFrame, out_path) -> None:
     """Shared shape for Flow 2's Naresh input file and Flow 2's dispatch
-    output for Haider: one sheet, currently ID-invalid rows only."""
+    output for Haider: 2 sheets, ID Corrections + DOB Mistakes, each cut down
+    to currently-invalid rows only. Naresh handles both together; whatever
+    either sheet leaves invalid becomes Haider's second-pass file in Flow 3."""
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         _write_filtered_sheet(
-            writer, sheet_name, df, pipeline.mask_id_only_invalid(df),
+            writer, flow_merge.SHEET_ID_CORRECTIONS, df, pipeline.mask_id_only_invalid(df),
             flow_merge.ID_COLS, pipeline.validation_reasons_id_only,
+        )
+        _write_filtered_sheet(
+            writer, flow_merge.SHEET_DOB_MISTAKES, df, pipeline.mask_dob_invalid(df),
+            flow_merge.DOB_COLS, pipeline.validation_reasons_dob_only,
         )
 
 
 def _write_flow1_naresh_xlsx(df: pd.DataFrame, out_path) -> None:
-    _write_ids_only_xlsx(df, out_path, "ID Corrections")
+    _write_ids_and_dob_xlsx(df, out_path)
 
 
 def _write_flow2_haider_xlsx(df: pd.DataFrame, out_path) -> None:
-    _write_ids_only_xlsx(df, out_path, "ID Corrections")
+    _write_ids_and_dob_xlsx(df, out_path)
 
 
 def _write_flat_xlsx(df: pd.DataFrame, out_path) -> None:

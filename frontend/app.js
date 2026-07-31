@@ -2,6 +2,20 @@ const API = window.K2_API_BASE || "/api";
 const POLL_MS = window.K2_POLL_INTERVAL_MS || 900;
 
 let jobId = localStorage.getItem("k2_job_id");
+// Which flow's own stages the sidebar is allowed to show, or null for the
+// unrestricted master view (dashboard / new batch / resuming a job from the
+// job history list). Set to 2 or 3 only when a job was just adopted through
+// the Flow 2 or Flow 3 standalone page, so Naresh/Haider only ever see their
+// own flow's step(s) -- not the other flows' stage names or a stage count
+// that hints at work beyond their own page. Display-only: the full status
+// JSON is still fetched underneath, this just narrows what gets rendered.
+let viewScopeFlow = Number(localStorage.getItem("k2_view_scope")) || null;
+
+function setViewScope(flowNum) {
+  viewScopeFlow = flowNum || null;
+  if (viewScopeFlow) localStorage.setItem("k2_view_scope", String(viewScopeFlow));
+  else localStorage.removeItem("k2_view_scope");
+}
 let pendingEdits = {}; // row_key -> { field: value }
 let savedDraftEdits = {}; // server-persisted draft values, keyed like pendingEdits
 let originalManualValues = {}; // only the rows currently on screen
@@ -118,9 +132,15 @@ function setSidebarJobChrome(visible) {
 
 function setJobContextActions(status) {
   const hasJob = Boolean(jobId && status);
-  goToDashboardBtnEl.hidden = false;
-  rollbackJobBtnEl.hidden = false;
-  goToDashboardBtnEl.disabled = !hasJob;
+  // Both buttons are meaningless without an active job -- there's nothing to
+  // jump back to or roll back on the dashboard/new-batch/flow-picker screens,
+  // so hide them there instead of showing a permanently-disabled pair.
+  goToDashboardBtnEl.hidden = !hasJob;
+  // Rollback hidden in the GUI for now -- re-enable by restoring the line
+  // below (`rollbackJobBtnEl.hidden = !hasJob;`) in place of the next one.
+  // rollbackJobBtnEl.hidden = !hasJob;
+  rollbackJobBtnEl.hidden = true;
+  goToDashboardBtnEl.disabled = false;
   rollbackJobBtnEl.disabled = !status?.rollback_available;
   rollbackJobBtnEl.title = status?.rollback_available
     ? `Restore ${status.rollback_label || "the latest checkpoint"}`
@@ -146,6 +166,7 @@ sidebarBrandToggleEl.onclick = () => {
 
 goToDashboardBtnEl.onclick = () => {
   if (!jobId || isBusy) return;
+  setViewScope(null);
   renderDashboard();
 };
 
@@ -405,29 +426,48 @@ function renderProcessingError(e) {
     localStorage.removeItem("k2_job_id");
     jobId = null;
     knownHistoryCount = null;
+    setViewScope(null);
     renderDashboard();
   };
 }
 
 // ---------- progress bar + stage list ----------
 
+// Stages the sidebar is allowed to show right now: every stage when no scope
+// is set (the master dashboard/wizard view), or only the stages owned by
+// `viewScopeFlow` when a job was adopted through the Flow 2/3 page. Keeps
+// each entry's original index into status.stages so "is this the current
+// stage" and rollback-target lookups still line up.
+function visibleStageEntries(status) {
+  return status.stages
+    .map((stage, index) => ({ stage, index }))
+    .filter(({ stage }) => !viewScopeFlow || stage.flow === viewScopeFlow);
+}
+
 function renderStageMeterAndHeader(status) {
   setSidebarJobChrome(true);
-  const total = status.stages.length;
-  const done = status.stages.filter((s) => s.status === "done").length;
+  const entries = visibleStageEntries(status);
+  const total = entries.length;
+  const done = entries.filter(({ stage }) => stage.status === "done").length;
   const pct = total ? Math.round((done / total) * 100) : 0;
   const current = status.stages[status.stage_index];
+  // If the job has moved on to a different flow than the one this screen is
+  // scoped to, don't let the header show that other flow's stage title --
+  // fall back to the last stage this scope owns instead.
+  const headerStage = !viewScopeFlow || (current && current.flow === viewScopeFlow)
+    ? current
+    : entries[entries.length - 1]?.stage;
   progressLabelEl.textContent = `${done} / ${total} stages`;
   progressPctEl.textContent = `${pct}%`;
-  workspaceStateEl.textContent = current ? current.title : "Final output";
+  workspaceStateEl.textContent = headerStage ? headerStage.title : "Final output";
   setJobContextActions(status);
 
   stageMeterEl.innerHTML = "";
-  status.stages.forEach((stage, i) => {
+  entries.forEach(({ stage, index }) => {
     const seg = document.createElement("div");
     seg.className = "meter-seg";
     if (stage.status === "done") seg.classList.add("done");
-    else if (i === status.stage_index) seg.classList.add("current");
+    else if (index === status.stage_index) seg.classList.add("current");
     stageMeterEl.appendChild(seg);
   });
 }
@@ -436,19 +476,29 @@ function renderStageList(status) {
   renderStageMeterAndHeader(status);
   stageListEl.innerHTML = "";
   const targetsByStage = new Map((status.rollback_targets || []).map((target) => [target.stage_index, target]));
-  status.stages.forEach((stage, i) => {
+  const entries = visibleStageEntries(status);
+  let lastGroup = null;
+  entries.forEach(({ stage, index }) => {
+    if (!viewScopeFlow && stage.flow !== lastGroup) {
+      lastGroup = stage.flow;
+      const header = document.createElement("li");
+      header.className = "stage-group-header";
+      header.textContent = `Flow ${stage.flow}`;
+      stageListEl.appendChild(header);
+    }
+
     const li = document.createElement("li");
     let cls = "pending";
     if (stage.status === "done") cls = "done";
-    if (i === status.stage_index) cls = "current";
+    if (index === status.stage_index) cls = "current";
     li.className = cls;
-    const stageState = i === status.stage_index ? "Current stage" : stage.status === "done" ? "Completed" : "Queued";
+    const stageState = index === status.stage_index ? "Current stage" : stage.status === "done" ? "Completed" : "Queued";
     li.title = `${stage.title}: ${stageState}`;
     li.setAttribute("aria-label", `${stage.title}: ${stageState}`);
 
     const dot = document.createElement("span");
     dot.className = "dot";
-    if (i === status.stage_index && stage.status !== "done") {
+    if (index === status.stage_index && stage.status !== "done") {
       dot.innerHTML = '<span class="mini-spinner"></span>';
     }
     li.appendChild(dot);
@@ -469,19 +519,21 @@ function renderStageList(status) {
     stageText.append(label, state);
     li.appendChild(stageText);
 
-    const rewindTarget = targetsByStage.get(i);
-    if (rewindTarget && i < status.stage_index) {
-      li.classList.add("rewind-target");
-      const rewindButton = document.createElement("button");
-      rewindButton.className = "stage-rewind";
-      rewindButton.type = "button";
-      rewindButton.textContent = "Reopen";
-      rewindButton.title = `Return to ${stage.title} and remove all later work`;
-      rewindButton.setAttribute("aria-label", rewindButton.title);
-      rewindButton.disabled = isBusy;
-      rewindButton.onclick = () => rewindToStage(rewindTarget);
-      li.appendChild(rewindButton);
-    }
+    // Rollback hidden in the GUI for now -- re-enable by uncommenting this
+    // block (the sidebar's per-stage "Reopen" rewind entry point).
+    // const rewindTarget = targetsByStage.get(index);
+    // if (rewindTarget && index < status.stage_index) {
+    //   li.classList.add("rewind-target");
+    //   const rewindButton = document.createElement("button");
+    //   rewindButton.className = "stage-rewind";
+    //   rewindButton.type = "button";
+    //   rewindButton.textContent = "Reopen";
+    //   rewindButton.title = `Return to ${stage.title} and remove all later work`;
+    //   rewindButton.setAttribute("aria-label", rewindButton.title);
+    //   rewindButton.disabled = isBusy;
+    //   rewindButton.onclick = () => rewindToStage(rewindTarget);
+    //   li.appendChild(rewindButton);
+    // }
 
     stageListEl.appendChild(li);
   });
@@ -576,6 +628,7 @@ function renderJobRecovery(e) {
     localStorage.removeItem("k2_job_id");
     jobId = null;
     knownHistoryCount = null;
+    setViewScope(null);
     renderDashboard();
   };
 }
@@ -600,7 +653,7 @@ function renderDashboard() {
   setCard(`
     <div class="stage-intro upload-stage-intro">
       <div class="stage-title-row">
-        <h2>Previous jobs</h2>
+        <h2>Dashboard</h2>
       </div>
       <p class="muted">Resume a job in progress, or start a new batch.</p>
     </div>
@@ -610,6 +663,21 @@ function renderDashboard() {
       <button class="secondary" id="flow3PageBtn" type="button">${iconMarkup("puzzle")}<span>Flow 3 (Haider)</span></button>
     </div>
     <div class="job-history">
+      <div class="job-history-filters">
+        <input type="search" id="jobSearchInput" placeholder="Search job ID or filename…" aria-label="Search jobs" />
+        <select id="jobStatusFilter" aria-label="Filter by status">
+          <option value="">All statuses</option>
+          <option value="processing">Processing</option>
+          <option value="in_progress">In progress</option>
+          <option value="done">Done</option>
+        </select>
+        <select id="jobFlowFilter" aria-label="Filter by flow">
+          <option value="">All flows</option>
+          <option value="1">Flow 1</option>
+          <option value="2">Flow 2</option>
+          <option value="3">Flow 3</option>
+        </select>
+      </div>
       <div class="table-wrap job-history-wrap" id="jobHistoryWrap">
         <p class="muted"><span class="mini-spinner"></span>Loading job history…</p>
       </div>
@@ -619,6 +687,9 @@ function renderDashboard() {
   document.getElementById("newBatchBtn").onclick = () => renderNewBatch();
   document.getElementById("flow2PageBtn").onclick = () => renderFlow2Page();
   document.getElementById("flow3PageBtn").onclick = () => renderFlow3Page();
+  document.getElementById("jobSearchInput").oninput = () => renderJobHistoryTable();
+  document.getElementById("jobStatusFilter").onchange = () => renderJobHistoryTable();
+  document.getElementById("jobFlowFilter").onchange = () => renderJobHistoryTable();
 
   loadJobHistory();
 }
@@ -665,6 +736,7 @@ function renderNewBatch() {
       jobId = status.job_id;
       knownHistoryCount = 0;
       localStorage.setItem("k2_job_id", jobId);
+      setViewScope(null);
       await pollProgressUntilIdle("Running automated steps…");
       clearBusy();
       toast("Job created");
@@ -782,6 +854,7 @@ async function renderFlowUploadStep(config) {
       jobId = selectedJobId;
       localStorage.setItem("k2_job_id", jobId);
       knownHistoryCount = null;
+      setViewScope(config.scopeFlow);
       isBusy = false;
       lockAllControls(false);
       await refresh(true);
@@ -807,12 +880,13 @@ function renderFlowProcessingStep(config) {
 function renderFlow2Page() {
   renderFlowIntakePage({
     title: "Flow 2 — Naresh's response",
-    description: "Upload Naresh's completed ID file. Only jobs currently parked at Flow 1 Dispatch are listed.",
+    description: "Upload Naresh's completed IDs + DOB workbook (2 sheets). Only jobs currently parked at Flow 1 Dispatch are listed.",
     pickerStageId: "flow1_dispatch",
+    scopeFlow: 2,
     path: "/flow2/naresh-response",
     submitLabel: "Upload and apply",
-    processingLabel: "Applying Naresh's response — merging IDs and rechecking…",
-    filePickersHtml: filePickerMarkup("flow2FileInput", "flow2FileZone", "flow2FileName", "Select Naresh's response file", "CSV, XLSX, or XLS"),
+    processingLabel: "Applying Naresh's response — merging IDs and DOBs, rechecking…",
+    filePickersHtml: filePickerMarkup("flow2FileInput", "flow2FileZone", "flow2FileName", "Select Naresh's response file", "ID Corrections + DOB Mistakes sheets"),
     wireFilePickers: () => wireFilePicker("flow2FileInput", "flow2FileZone", "flow2FileName"),
     buildFormData: () => {
       const file = document.getElementById("flow2FileInput").files[0];
@@ -829,20 +903,21 @@ function renderFlow3Page() {
     title: "Flow 3 — Haider's response",
     description: "Upload both of Haider's completed files together. Only jobs currently parked at Flow 2 Dispatch are listed.",
     pickerStageId: "flow2_dispatch",
+    scopeFlow: 3,
     path: "/flow3/haider-response",
     submitLabel: "Upload and apply",
     processingLabel: "Applying Haider's response — merging corrections…",
     filePickersHtml: `
-      ${filePickerMarkup("flow3CorrectionsFileInput", "flow3CorrectionsFileZone", "flow3CorrectionsFileName", "Select Haider's corrections file", "Name/DOB/Mobile/CMS workbook")}
-      ${filePickerMarkup("flow3IdsFileInput", "flow3IdsFileZone", "flow3IdsFileName", "Select Haider's IDs response file", "Optional — only if IDs are still invalid")}
+      ${filePickerMarkup("flow3CorrectionsFileInput", "flow3CorrectionsFileZone", "flow3CorrectionsFileName", "Select Haider's corrections file", "Name/Mobile/CMS workbook")}
+      ${filePickerMarkup("flow3IdsFileInput", "flow3IdsFileZone", "flow3IdsFileName", "Select Haider's IDs/DOB response file", "Optional — only if IDs or DOBs are still invalid")}
     `,
     wireFilePickers: () => {
       wireFilePicker("flow3CorrectionsFileInput", "flow3CorrectionsFileZone", "flow3CorrectionsFileName");
       wireFilePicker("flow3IdsFileInput", "flow3IdsFileZone", "flow3IdsFileName");
     },
-    // ids file is optional: if Naresh already resolved every invalid ID,
-    // there's nothing left for Haider's IDs file to fix, so it can be left
-    // unselected -- the backend enforces whether that's actually true.
+    // ids file is optional: if Naresh already resolved every invalid ID and
+    // DOB, there's nothing left for Haider's second-pass file to fix, so it
+    // can be left unselected -- the backend enforces whether that's actually true.
     buildFormData: () => {
       const correctionsFile = document.getElementById("flow3CorrectionsFileInput").files[0];
       const idsFile = document.getElementById("flow3IdsFileInput").files[0];
@@ -860,6 +935,7 @@ function resumeJob(jobIdToResume) {
   jobId = jobIdToResume;
   localStorage.setItem("k2_job_id", jobId);
   knownHistoryCount = null;
+  setViewScope(null);
   refresh(true);
 }
 
@@ -876,6 +952,16 @@ function jobStatusPillMarkup(job) {
   return `<span class="data-label data-label-unverified">${escapeHtml(job.stage_title || "In progress")}</span>`;
 }
 
+// A job's own "flow" tag tells you which of the 3 self-contained flows it's
+// currently stuck in without having to read/parse the specific stage title --
+// e.g. "Flow 2" at a glance, instead of having to know that "Flow 2
+// Dispatch" belongs to Flow 2. Blank once a job is fully done -- by then it
+// isn't stuck anywhere.
+function jobFlowCellMarkup(job) {
+  if (job.is_done || !job.flow) return "—";
+  return `Flow ${job.flow}`;
+}
+
 function jobHistoryRowMarkup(job) {
   const rowCount = job.row_count != null ? Number(job.row_count).toLocaleString() : "—";
   const downloadCell = job.is_done
@@ -883,29 +969,44 @@ function jobHistoryRowMarkup(job) {
     : "";
   return `<tr class="job-history-row" data-resume-job="${escapeHtml(job.job_id)}" tabindex="0">
     <td class="mono">${escapeHtml(job.job_id)}</td>
-    <td>${escapeHtml(job.filename || "")}</td>
+    <td title="${escapeHtml(job.filename || "")}">${escapeHtml(job.filename || "")}</td>
     <td>${rowCount}</td>
+    <td>${jobFlowCellMarkup(job)}</td>
     <td>${jobStatusPillMarkup(job)}</td>
     <td>${downloadCell}</td>
   </tr>`;
 }
 
-async function loadJobHistory() {
+let allJobsHistory = []; // full unfiltered list from the server, re-filtered client-side on every keystroke/change
+
+function jobStatusBucket(job) {
+  if (job.is_processing) return "processing";
+  if (job.is_done) return "done";
+  return "in_progress";
+}
+
+function filteredJobHistory() {
+  const query = (document.getElementById("jobSearchInput")?.value || "").trim().toLowerCase();
+  const statusFilter = document.getElementById("jobStatusFilter")?.value || "";
+  const flowFilter = document.getElementById("jobFlowFilter")?.value || "";
+  return allJobsHistory.filter((job) => {
+    if (statusFilter && jobStatusBucket(job) !== statusFilter) return false;
+    if (flowFilter && String(job.flow ?? "") !== flowFilter) return false;
+    if (query && !`${job.job_id} ${job.filename || ""}`.toLowerCase().includes(query)) return false;
+    return true;
+  });
+}
+
+function renderJobHistoryTable() {
   const wrap = document.getElementById("jobHistoryWrap");
   if (!wrap) return;
-  let jobs;
-  try {
-    const data = await apiRetrying("/jobs");
-    jobs = data.jobs || [];
-  } catch (e) {
-    if (document.getElementById("jobHistoryWrap")) {
-      wrap.innerHTML = `<p class="muted">Could not load job history: ${escapeHtml(e.message)}</p>`;
-    }
+  if (!allJobsHistory.length) {
+    wrap.innerHTML = `<p class="muted">No previous jobs yet.</p>`;
     return;
   }
-  if (!document.getElementById("jobHistoryWrap")) return;
+  const jobs = filteredJobHistory();
   if (!jobs.length) {
-    wrap.innerHTML = `<p class="muted">No previous jobs yet.</p>`;
+    wrap.innerHTML = `<p class="muted">No jobs match the current search/filters.</p>`;
     return;
   }
   const groups = new Map();
@@ -916,11 +1017,11 @@ async function loadJobHistory() {
   });
   const bodyHtml = [...groups.entries()].map(([dateKey, jobsInGroup]) => {
     const heading = dateKey === "Earlier" ? "Earlier" : formatJobDateKey(dateKey);
-    return `<tr class="job-history-group"><td colspan="5">${escapeHtml(heading)}</td></tr>${jobsInGroup.map(jobHistoryRowMarkup).join("")}`;
+    return `<tr class="job-history-group"><td colspan="6">${escapeHtml(heading)}</td></tr>${jobsInGroup.map(jobHistoryRowMarkup).join("")}`;
   }).join("");
   wrap.innerHTML = `
     <table class="job-history-table">
-      <thead><tr><th>Job</th><th>File</th><th>Rows</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Job</th><th>File</th><th>Rows</th><th>Flow</th><th>Status</th><th></th></tr></thead>
       <tbody>${bodyHtml}</tbody>
     </table>
   `;
@@ -933,6 +1034,22 @@ async function loadJobHistory() {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); resumeJob(row.dataset.resumeJob); }
     });
   });
+}
+
+async function loadJobHistory() {
+  const wrap = document.getElementById("jobHistoryWrap");
+  if (!wrap) return;
+  try {
+    const data = await apiRetrying("/jobs");
+    allJobsHistory = data.jobs || [];
+  } catch (e) {
+    if (document.getElementById("jobHistoryWrap")) {
+      wrap.innerHTML = `<p class="muted">Could not load job history: ${escapeHtml(e.message)}</p>`;
+    }
+    return;
+  }
+  if (!document.getElementById("jobHistoryWrap")) return;
+  renderJobHistoryTable();
 }
 
 async function previewRawUpload(file) {
@@ -971,10 +1088,16 @@ function renderStage(status, current) {
 function renderUploadStage(current) {
   const guidance = current.guidance || {};
   const overwriteCount = (guidance.overwrite_fields || []).length;
+  // "expected_file" already names exactly what this stage wants (e.g.
+  // "Historical replacement export") -- reuse it in the picker prompt and
+  // processing message too, instead of a generic hardcoded "reference file"
+  // that wouldn't describe a future upload stage expecting something else.
+  const expectedFile = guidance.expected_file || "file";
+  // current.label (the short subtitle rendered above) already names the
+  // expected file and its matching key -- this second line only adds
+  // whatever that one didn't cover, instead of restating it.
   const description = [
-    guidance.expected_file || "Reference file",
-    `matches on ${guidance.matching_key || "ACCOUNT_NUMBER"}`,
-    overwriteCount ? `updates ${overwriteCount} field(s)` : null,
+    overwriteCount ? `Updates ${overwriteCount} field(s)` : null,
     guidance.duplicate_handling,
   ].filter(Boolean).join(" — ");
   setCard(`
@@ -985,7 +1108,7 @@ function renderUploadStage(current) {
     </div>
     <div class="upload-simple-layout">
       <p class="muted">${escapeHtml(description)}</p>
-      ${filePickerMarkup("refFileInput", "referenceFileZone", "referenceFileName", "Select reference file", "CSV, XLSX, or XLS")}
+      ${filePickerMarkup("refFileInput", "referenceFileZone", "referenceFileName", `Select ${expectedFile.toLowerCase()}`, "CSV, XLSX, or XLS")}
     </div>
     <div class="row-actions">
       <button id="uploadBtn">${iconMarkup("upload")}<span>Upload and continue</span></button>
@@ -999,7 +1122,7 @@ function renderUploadStage(current) {
     if (!file) { toast("Choose a file first", "error"); return; }
     const fd = new FormData();
     fd.append("file", file);
-    runAction(`/jobs/${jobId}/upload`, { method: "POST", body: fd }, "Merging reference file…");
+    runAction(`/jobs/${jobId}/upload`, { method: "POST", body: fd }, `Merging ${expectedFile.toLowerCase()}…`);
   };
   if (current.skippable) {
     document.getElementById("skipUploadBtn").onclick = () => {
@@ -1048,11 +1171,12 @@ function renderFlowWaitStage(current) {
   const waitingOn = isFlow1
     ? "Naresh's response is uploaded on the Flow 2 page"
     : "Haider's response is uploaded on the Flow 3 page";
+  const stillInvalid = (current.invalid_id_count || 0) + (current.invalid_dob_count || 0);
   const invalidNote = isFlow1
     ? ""
-    : current.invalid_count > 0
-      ? `<p class="muted">${current.invalid_count} account(s) still have an invalid ID — that's what's in the Flow 2 file above.</p>`
-      : `<p class="muted">No IDs are currently invalid — Haider doesn't need an IDs file for this job on Flow 3, just his corrections file.</p>`;
+    : stillInvalid > 0
+      ? `<p class="muted">${current.invalid_id_count} account(s) still have an invalid ID and ${current.invalid_dob_count} an invalid DOB — that's what's in the Flow 2 file above.</p>`
+      : `<p class="muted">No IDs or DOBs are currently invalid — Haider doesn't need a second-pass file for this job on Flow 3, just his corrections file.</p>`;
   const nextLabel = isFlow1 ? "Next: Flow 2" : "Next: Flow 3";
   setCard(`
     <div class="stage-intro upload-stage-intro">
@@ -1133,6 +1257,7 @@ function renderDone(current) {
     localStorage.removeItem("k2_job_id");
     jobId = null;
     knownHistoryCount = null;
+    setViewScope(null);
     refresh();
   };
 }

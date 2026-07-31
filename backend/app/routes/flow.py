@@ -3,17 +3,19 @@ mini-pipeline, not one long linear chain:
 
   Flow 1 (the normal job wizard): clean...mobile_fill -> Flow 1 Dispatch.
     Hands out two files and stops -- done, nothing advances it further from
-    inside Flow 1 itself.
+    inside Flow 1 itself. Naresh gets IDs + DOB, Haider gets Name/Mobile/CMS.
   Flow 2 (this file's naresh-response endpoint, driven from a separate
-    picker page): input Naresh's file -> merge IDs -> verify invalid count
-    -> Flow 2 Dispatch (hands out the leftover-ID file for Haider).
+    picker page): input Naresh's ID+DOB file -> merge both -> verify both
+    still-invalid counts -> Flow 2 Dispatch (hands out whatever's still
+    invalid, ID and/or DOB, as a second-pass file for Haider).
   Flow 3 (this file's haider-response endpoint, another separate picker
-    page): input Haider's two files -> merge into the raw data -> the
-    existing final_id_check/default_id gates (final ID scan, then the
-    confirm-click default-ID assignment) -> final output. Flow 3 doesn't
-    stop at its own screen -- once its upload is applied, the frontend hands
-    the job to the normal per-job wizard, which already knows how to walk
-    through confirm -> done.
+    page): input Haider's two files (corrections: Name/Mobile/CMS, plus the
+    optional ID+DOB second pass) -> merge into the raw data -> the existing
+    final_id_check/default_id gates (final ID scan, then the confirm-click
+    default-ID assignment) -> final output. Flow 3 doesn't stop at its own
+    screen -- once its upload is applied, the frontend hands the job to the
+    normal per-job wizard, which already knows how to walk through
+    confirm -> done.
 
 Routes below are grouped by which flow's *action* they serve, not by which
 stage_id happens to be current when they're called -- e.g. naresh-response
@@ -111,8 +113,8 @@ async def apply_naresh_response(job_id: str, file: UploadFile = File(...)):
     raw = await file.read()
     filename = file.filename or "Naresh's response"
     try:
-        resp_df = store.read_table(raw, filename)
-        flow_merge.validate_naresh_response(resp_df)
+        sheets = _read_workbook_sheets(raw, filename)
+        flow_merge.validate_naresh_response(sheets)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -123,20 +125,25 @@ async def apply_naresh_response(job_id: str, file: UploadFile = File(...)):
         before = df.copy(deep=True)
         st = store.get_status(job_id)
         cur = _current_stage(st)
-        df, summary, matched = flow_merge.apply_naresh_response(df, resp_df)
-        remaining = int(pipeline.mask_id_only_invalid(df).sum())
+        df, summary, counts = flow_merge.apply_naresh_response(df, sheets)
+        remaining_id = int(pipeline.mask_id_only_invalid(df).sum())
+        remaining_dob = int(pipeline.mask_dob_invalid(df).sum())
         _append_audit_events(
-            st, before, df, stage_id=cur["id"], fields=flow_merge.ID_COLS,
-            label="Naresh corrected", reason="ID correction supplied by Naresh (Flow 2 input).",
+            st, before, df, stage_id=cur["id"], fields=[*flow_merge.ID_COLS, *flow_merge.DOB_COLS],
+            label="Naresh corrected", reason="ID/DOB correction supplied by Naresh (Flow 2 input).",
             source_file=filename, operator="Naresh",
         )
         cur["status"] = "done"
         st["history"].append({
             "stage_id": cur["id"], "title": cur["title"],
-            "summary": f"{summary} {remaining} account(s) still invalid.",
-            # remaining_invalid drives Flow 2's own completion message and
-            # lets Flow 3 know whether this job even needs an IDs file.
-            "metrics": {"matched_rows": matched, "remaining_invalid": remaining},
+            "summary": f"{summary} {remaining_id} ID and {remaining_dob} DOB account(s) still invalid.",
+            # remaining_invalid_id/dob drive Flow 2's own completion message
+            # and let Flow 3 know whether this job even needs a second-pass file.
+            "metrics": {
+                "matched_rows": counts["id_matched"] + counts["dob_matched"],
+                "id_matched": counts["id_matched"], "dob_matched": counts["dob_matched"],
+                "remaining_invalid_id": remaining_id, "remaining_invalid_dob": remaining_dob,
+            },
         })
         st["stage_index"] += 1
         store.set_df(job_id, df)
@@ -166,10 +173,11 @@ def download_flow2_haider(job_id: str):
 async def apply_haider_response(
     job_id: str,
     corrections_file: UploadFile = File(...),
-    # Optional: if Naresh already resolved every invalid ID, there's nothing
-    # left for Haider's IDs file to fix -- no flow2_haider.xlsx worth acting
-    # on, so no input should be required here either. Enforced below against
-    # the job's actual current invalid count, not just trusted from the client.
+    # Optional: if Naresh already resolved every invalid ID and DOB, there's
+    # nothing left for Haider's second-pass file to fix -- no flow2_haider.xlsx
+    # worth acting on, so no input should be required here either. Enforced
+    # below against the job's actual current invalid counts, not just trusted
+    # from the client.
     ids_file: UploadFile | None = File(None),
 ):
     status = _require_job(job_id)
@@ -177,11 +185,14 @@ async def apply_haider_response(
     if stage is None or stage["type"] != "flow2":
         raise HTTPException(400, "this job is not waiting on a Flow 3 input")
 
-    still_invalid = int(pipeline.mask_id_only_invalid(store.get_df(job_id)).sum())
-    if ids_file is None and still_invalid > 0:
+    current_df = store.get_df(job_id)
+    still_invalid_id = int(pipeline.mask_id_only_invalid(current_df).sum())
+    still_invalid_dob = int(pipeline.mask_dob_invalid(current_df).sum())
+    if ids_file is None and (still_invalid_id > 0 or still_invalid_dob > 0):
         raise HTTPException(
             400,
-            f"{still_invalid} account(s) still have invalid IDs -- Haider's IDs response file is required",
+            f"{still_invalid_id} account(s) still have an invalid ID and {still_invalid_dob} an invalid DOB -- "
+            "Haider's IDs/DOB response file is required",
         )
 
     corrections_raw = await corrections_file.read()
@@ -190,15 +201,15 @@ async def apply_haider_response(
     ids_filename = None
     if ids_file is not None:
         ids_raw = await ids_file.read()
-        ids_filename = ids_file.filename or "Haider's IDs response"
+        ids_filename = ids_file.filename or "Haider's IDs/DOB response"
 
     try:
         sheets = _read_workbook_sheets(corrections_raw, corrections_filename)
         flow_merge.validate_haider_corrections_response(sheets)
-        ids_resp_df = None
+        ids_sheets = None
         if ids_raw is not None:
-            ids_resp_df = store.read_table(ids_raw, ids_filename)
-            flow_merge.validate_haider_ids_response(ids_resp_df)
+            ids_sheets = _read_workbook_sheets(ids_raw, ids_filename)
+            flow_merge.validate_haider_ids_response(ids_sheets)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -214,7 +225,7 @@ async def apply_haider_response(
         after_corrections = df.copy(deep=True)
         _append_audit_events(
             st, before_all, after_corrections, stage_id=cur["id"],
-            fields=[*flow_merge.NAME_COLS, *flow_merge.DOB_COLS, *flow_merge.MOBILE_COLS, *pipeline.CMS_UPDATE_COLS],
+            fields=[*flow_merge.NAME_COLS, *flow_merge.MOBILE_COLS, *pipeline.CMS_UPDATE_COLS],
             label="Haider corrected", reason="Correction supplied by Haider's response.",
             source_file=corrections_filename, operator="Haider",
         )
@@ -227,15 +238,16 @@ async def apply_haider_response(
             "metrics": {"matched_rows": counts["cms_matched"], "unmatched_rows": len(after_corrections) - counts["cms_matched"]},
         })
 
-        if ids_resp_df is not None:
-            df, ids_summary, ids_matched = flow_merge.apply_haider_ids_response(df, ids_resp_df)
+        if ids_sheets is not None:
+            df, ids_summary, ids_counts = flow_merge.apply_haider_ids_response(df, ids_sheets)
             _append_audit_events(
-                st, after_corrections, df, stage_id=cur["id"], fields=flow_merge.ID_COLS,
-                label="Haider corrected (IDs)", reason="ID correction supplied by Haider's IDs response.",
+                st, after_corrections, df, stage_id=cur["id"], fields=[*flow_merge.ID_COLS, *flow_merge.DOB_COLS],
+                label="Haider corrected (IDs)", reason="ID/DOB correction supplied by Haider's second-pass response.",
                 source_file=ids_filename, operator="Haider",
             )
+            ids_matched = ids_counts["id_matched"] + ids_counts["dob_matched"]
         else:
-            ids_summary = "No IDs were still invalid -- no IDs file was needed."
+            ids_summary = "No IDs or DOBs were still invalid -- no second-pass file was needed."
             ids_matched = 0
 
         cur["status"] = "done"

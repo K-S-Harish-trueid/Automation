@@ -53,7 +53,8 @@ _RULES_PANELS = {
             "ID_TYPE is Passport / National Id / Civil Id -- \"doc\" and anything else fails",
             "ID_NUMBER matches that type's format -- Passport: 8-9 chars starting with a letter, "
             "National Id: exactly 12 digits, Civil Id: just needs to be present",
-            "ACCOUNT_HOLDER_DOB is a real date, not year 1900, and age is 18+",
+            "ACCOUNT_HOLDER_DOB is a real date, after year 1900, and the customer was 18+ "
+            "when DATE_OPENED happened (falls back to today's age if DATE_OPENED can't be read)",
         ],
         "note": None,
     },
@@ -99,6 +100,11 @@ def _testable_stages() -> dict:
         }
         for stage_id, cfg in pipeline.MANUAL_STAGES.items()
     }
+    # DATE_OPENED isn't reviewer-editable (it's account metadata, not
+    # something a reviewer corrects, so it's not in editable_cols), but the
+    # DOB check now needs it to test the age-at-opening rule -- added here
+    # for the sandbox only.
+    stages["id_dob_validate"]["fields"] = [*stages["id_dob_validate"]["fields"], "DATE_OPENED"]
     stages["address_fix"] = {
         "title": titles["address_fix"],
         "fields": _ADDRESS_FIX_FIELDS,
