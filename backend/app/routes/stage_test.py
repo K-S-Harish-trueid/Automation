@@ -53,7 +53,7 @@ _RULES_PANELS = {
             "ID_TYPE is Passport / National Id / Civil Id -- \"doc\" and anything else fails",
             "ID_NUMBER matches that type's format -- Passport: 8-9 chars starting with a letter, "
             "National Id: exactly 12 digits, Civil Id: just needs to be present",
-            "ACCOUNT_HOLDER_DOB is a real date, after year 1900, and the customer was 18+ "
+            "ACCOUNT_HOLDER_DOB is a real date, after year 1905, and the customer was 18+ "
             "when DATE_OPENED happened (falls back to today's age if DATE_OPENED can't be read)",
         ],
         "note": None,

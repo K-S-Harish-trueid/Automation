@@ -2,10 +2,10 @@ import pandas as pd
 
 from ..toolbox import _reasons_by_row, _s, compute_id_validity, id_reason_checks, parse_dob_series, series_available
 
-# The default/placeholder DOB is 1 Jan 1900 -- per requirement, any DOB after
-# this exact date is valid (so e.g. 1900-02-01 is fine), only this date
+# The default/placeholder DOB is 1 Jan 1905 -- per requirement, any DOB after
+# this exact date is valid (so e.g. 1905-02-01 is fine), only this date
 # itself or anything earlier is treated as a non-real DOB.
-DEFAULT_DOB_CUTOFF = pd.Timestamp("1900-01-01")
+DEFAULT_DOB_CUTOFF = pd.Timestamp("1905-01-01")
 
 
 def _age_years_at_opening(df: pd.DataFrame, parsed_dob: pd.Series) -> pd.Series:
@@ -24,9 +24,9 @@ def compute_dob_validity(df: pd.DataFrame) -> pd.Series:
     avail = series_available(df.get("ACCOUNT_HOLDER_DOB", pd.Series([""] * len(df), index=df.index)))
     parsed = parse_dob_series(dob_s)
     valid_format = parsed.notna()
-    after_1900 = parsed > DEFAULT_DOB_CUTOFF
+    after_cutoff = parsed > DEFAULT_DOB_CUTOFF
     is_adult = _age_years_at_opening(df, parsed) >= 18
-    return (avail & valid_format & after_1900 & is_adult).fillna(False)
+    return (avail & valid_format & after_cutoff & is_adult).fillna(False)
 
 
 def mask_id_dob_invalid(df: pd.DataFrame) -> pd.Series:
@@ -47,7 +47,7 @@ def _dob_reason_checks(df: pd.DataFrame, dob: pd.Series, parsed: pd.Series) -> l
     return [
         (~dob_available, "DOB is missing."),
         (dob_available & parsed.isna(), "DOB is not a recognized date."),
-        (parsed.notna() & (parsed <= DEFAULT_DOB_CUTOFF), "DOB must be after 1 January 1900."),
+        (parsed.notna() & (parsed <= DEFAULT_DOB_CUTOFF), "DOB must be after 1 January 1905."),
         (parsed.notna() & (parsed > DEFAULT_DOB_CUTOFF) & age_years.lt(18),
          "Customer was under 18 when the account was opened."),
     ]

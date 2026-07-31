@@ -52,10 +52,12 @@ CHECK 3 -- DATE OF BIRTH (ACCOUNT_HOLDER_DOB)
      "%Y-%m-%d %H:%M:%S" first, then falls back to a flexible day-first
      parse.
      -> reason if neither succeeds: "DOB is not a recognized date."
-  3. Parsed year must not be 1900 (treated as a placeholder/default date).
-     -> reason: "DOB cannot use the default year 1900."
-  4. Age must be >= 18 years, computed as (today - DOB) in days / 365.25.
-     -> reason: "DOB indicates the customer is under 18."
+  3. Parsed date must be strictly after 1 January 1905 (1905-01-01 itself or
+     earlier is treated as a placeholder/default date).
+     -> reason: "DOB must be after 1 January 1905."
+  4. Age must be >= 18 years, computed as (DATE_OPENED - DOB) in days /
+     365.25 (falls back to today's date if DATE_OPENED can't be parsed).
+     -> reason: "Customer was under 18 when the account was opened."
 
 EDITABLE FIELDS
 ID_TYPE, ID_NUMBER, ACCOUNT_HOLDER_DOB.
