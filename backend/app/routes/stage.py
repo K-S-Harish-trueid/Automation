@@ -61,19 +61,20 @@ def current_stage_detail(job_id: str, page: int = 1):
             "api_invoke_planned": bool(stage.get("api_invoke_planned")),
         }
 
-    if stage["type"] in ("flow1", "flow2"):
+    if stage["type"] in ("stage1", "stage2"):
         payload = {
             "type": stage["type"],
             "stage_id": stage["id"],
             "title": stage["title"],
             "row_count": len(df),
         }
-        if stage["type"] == "flow2":
-            # Lets the wait screen (and Flow 3) tell the operator whether
+        if stage["type"] == "stage2":
+            # Lets the wait screen (and Stage 3) tell the operator whether
             # there's anything left for Haider's second-pass file to fix --
-            # if both are 0, Flow 3 doesn't need that file for this job at all.
+            # if both are 0, Stage 3 doesn't need that file for this job at all.
             payload["invalid_id_count"] = int(pipeline.mask_id_only_invalid(df).sum())
             payload["invalid_dob_count"] = int(pipeline.mask_dob_invalid(df).sum())
+            payload["invalid_name_count"] = int(pipeline.mask_name_invalid(df).sum())
         return payload
 
     if stage["type"] == "confirm":

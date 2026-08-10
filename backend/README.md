@@ -50,9 +50,10 @@ rule (bad names, bad IDs, bad DoBs, bad addresses, missing phones) plus the
 reference file needed at the `replace` upload gate. See
 `../dummy_data/README.md` for which account triggers what. Upload
 `dummy_raw.csv` at the start screen and `dummy_replace_reference.xlsx` at the
-"Data Consistency Update" stage. `dummy_cms_export.csv` predates the Flow
+"Historical Override" stage. `dummy_cms_export.csv` predates the Stage
 1/2/3 handoff below and is no longer consumed by an automatic stage — CMS
-data now comes in by hand through Haider's Flow 3 corrections response instead.
+mobile/card data now comes in through two direct CMS export files at Stage 3
+instead (see below).
 
 ### Hosting the frontend and backend separately
 
@@ -103,11 +104,12 @@ backend/
     pipeline/       Stage logic ported from clean.py / replace.py / cmsdata.py /
                     idvalid.py / dobvalid.py / pah3.py / mobileupd.py, one file
                     per pipeline stage -- see below
-    routes/flow.py  The Flow 1/2/3 reviewer handoff: dispatch/download the
-                    Flow 1 and Flow 2 xlsx files, and ingest Naresh's/Haider's
-                    responses. Kept out of stage.py since its upload/merge
-                    shape (two files at once for Flow 3, blank-means-no-change
-                    merges) differs from the generic upload-stage gate.
+    routes/handoff.py  The Stage 1/2/3 reviewer handoff: dispatch/download
+                    the Stage 1 and Stage 2 xlsx files, and ingest Naresh's/
+                    Haider's responses. Kept out of stage.py since its
+                    upload/merge shape (three files at once for Stage 3,
+                    blank-means-no-change merges) differs from the generic
+                    upload-stage gate.
   jobs/             Runtime data, one folder per job (gitignored, safe to delete when idle)
   requirements.txt
 ```
@@ -136,18 +138,20 @@ pipeline/
                     Each file: that stage's own constants, validator,
                     reason messages, and handler -- nothing else.
                     (cms_integration.py now only holds the CMS_UPDATE_COLS
-                    column list -- CMS data comes in through Haider's Flow 3
-                    corrections response, not an automated merge stage.
-                    flow1_dispatch, flow2_dispatch, and done have no
-                    pipeline-layer stage code -- handled directly in routes/.)
-  flow_merge.py     Apply/validate logic for the Flow 1/2/3 handoff --
+                    column list -- CMS mobile/card data comes in through two
+                    direct CMS export files at Stage 3, not an automated
+                    merge stage. stage1_dispatch, stage2_dispatch, and done
+                    have no pipeline-layer stage code -- handled directly in
+                    routes/.)
+  stage_merge.py    Apply/validate logic for the Stage 1/2/3 handoff --
                     matches by ACCOUNT_NUMBER, overwrites a cell only where
-                    the reviewer's response provides a non-blank value.
+                    the reviewer's response (or CMS export) provides a
+                    non-blank value.
 ```
 
 ## Pipeline stages
 
-Each stage is one of `auto`, `upload`, `manual_edit`, `flow1`, `flow2`,
+Each stage is one of `auto`, `upload`, `manual_edit`, `stage1`, `stage2`,
 `confirm`, or `done`; the server auto-runs `auto` stages back to back and
 stops on the others until the frontend (or an API call) resolves them.
 
@@ -155,16 +159,16 @@ stops on the others until the frontend (or an API call) resolves them.
 |---|---|---|---|
 | 1 | `clean` | auto | Strips line breaks from every field |
 | 2 | `replace` | upload | Upload a historical override file; merges on `ACCOUNT_NUMBER`, all fields except `CARD_NUMBER`. Skippable — `POST /jobs/{id}/skip` advances without a file, leaving accounts at their current values |
-| 3 | `reset_cms` | auto | Blanks `ACCOUNT_TYPE`/`CARD_TYPE`/`CARD_PROGRAM`/`CARD_STATUS` |
-| 4 | `name_validate` | manual_edit | Flags 1-character first/middle/last names for inline correction |
-| 5 | `id_dob_validate` | manual_edit | Flags invalid `ID_TYPE`/`ID_NUMBER`/DoB for inline correction |
-| 6 | `address_fix` | auto | Auto-fills accounts with a missing address, an address with no letters at all (e.g. a phone number or placeholder), or an exact match against a known-junk denylist (e.g. "JUNE", a single letter) — replacement pulled from a Baghdad/province address pool, ported from the legacy `pah3.py` script. Rows whose province has no pool entry are left invalid, with no later step re-checking them — see `rules/06-address_fix.txt` |
-| 7 | `mobile_fill` | manual_edit | Flags accounts with no phone number (blank, `XXX_NOT_COLLECTED_XXX`, or all-zero) for inline entry |
-| 8 | `flow1_dispatch` | flow1 | Parks the job and hands out two files: `flow1_haider.xlsx` (Name/Mobile flagged rows + a blank CMS sheet for every account) and `flow1_naresh.xlsx` (ID Corrections + DOB Mistakes sheets, every currently invalid row of each). Advanced externally by the Flow 2 page once Naresh's response is uploaded — see "Flow 1/2/3 reviewer handoff" below |
-| 9 | `flow2_dispatch` | flow2 | Parks the job and hands out `flow2_haider.xlsx` (ID Corrections + DOB Mistakes sheets, only the rows still invalid after Naresh's fixes). Advanced externally by the Flow 3 page once Haider's response(s) are uploaded |
-| 10 | `final_id_check` | manual_edit | Last pass on any still-invalid IDs (part of Flow 3's own tail, not a separate trip) |
-| 11 | `default_id` | confirm | Assigns a random 8-digit ID (`00######`) + `Civil Id` type to whatever is still invalid (also Flow 3's tail — the frontend renders this straight off the Flow 3 upload, same shared confirm screen used everywhere else) |
-| 12 | `done` | done | Final dataset ready to download (Flow 3's last stage) |
+| 3 | `reset_cms` | auto | Blanks `ACCOUNT_TYPE`/`CARD_TYPE`/`CARD_PROGRAM`/`CARD_STATUS`/`DATE_OPENED` |
+| 4 | `id_dob_validate` | manual_edit | Flags invalid `ID_TYPE`/`ID_NUMBER`/DoB for inline correction |
+| 5 | `address_fix` | auto | Auto-fills accounts with a missing address, an address with no letters at all (e.g. a phone number or placeholder), or an exact match against a known-junk denylist (e.g. "JUNE", a single letter) — replacement pulled from a Baghdad/province address pool, ported from the legacy `pah3.py` script. Rows whose province has no pool entry are left invalid, with no later step re-checking them — see `rules/06-address_fix.txt` |
+| 6 | `mobile_fill` | manual_edit | Flags accounts with no phone number (blank, `XXX_NOT_COLLECTED_XXX`, or all-zero) for inline entry |
+| 7 | `stage1_dispatch` | stage1 | Parks the job and hands out two files: `stage1_haider.xlsx` (Mobile flagged rows + a blank CMS sheet for every account, filled in for real later at Stage 3) and `stage1_naresh.xlsx` (ID Corrections + DOB Corrections sheets, every currently invalid row of each). Advanced externally by the Stage 2 page once Naresh's response is uploaded — see "Stage 1/2/3 reviewer handoff" below |
+| 8 | `name_validate` | manual_edit | Flags 1-character first/middle/last names for inline correction. Deliberately sits *after* Stage 1 Dispatch, not before — name issues are never in Haider's Stage 1 file, only bundled into the Stage 2 dispatch file |
+| 9 | `stage2_dispatch` | stage2 | Parks the job and hands out `stage2_haider.xlsx` (Name Validation + ID Corrections + DOB Corrections sheets: name issues from `name_validate` above, plus whatever's still invalid after Naresh's ID/DOB fixes). Advanced externally by the Stage 3 page once Haider's response(s) are uploaded |
+| 10 | `final_id_check` | manual_edit | Last pass on any still-invalid IDs (part of Stage 3's own tail, not a separate trip) |
+| 11 | `default_id` | confirm | Assigns a random 8-digit ID (`00######`) + `Civil Id` type to whatever is still invalid (also Stage 3's tail — the frontend renders this straight off the Stage 3 upload, same shared confirm screen used everywhere else) |
+| 12 | `done` | done | Final dataset ready to download (Stage 3's last stage) |
 
 `manual_edit` stages page 200 flagged rows at a time; submitting a batch
 re-validates and either loads the next batch or advances. Every manual stage
@@ -202,72 +206,84 @@ a background thread. Poll `/progress` until it stops reporting
 | `POST /jobs/{id}/upload` | multipart `file` — resolve an `upload` stage in the background |
 | `POST /jobs/{id}/skip` | Skip the current stage without doing its normal action (only stages marked `skippable`: currently just `replace`) |
 | `POST /jobs/{id}/submit` | `{ edits: [{row_key, field, value}], force_advance }` — resolve a `manual_edit` stage in the background |
-| `GET /jobs/{id}/flow1/haider.xlsx` | Download Haider's Flow 1 file (Name/Mobile flagged rows + blank CMS sheet) while parked at `flow1_dispatch`; repeatable, no side effects |
-| `GET /jobs/{id}/flow1/naresh.xlsx` | Download Naresh's Flow 1 file (ID Corrections + DOB Mistakes sheets, every currently invalid row of each) while parked at `flow1_dispatch`; repeatable, no side effects |
-| `POST /jobs/{id}/flow2/naresh-response` | multipart `file` (2 sheets: ID Corrections, DOB Mistakes) — Flow 2's merge step: apply Naresh's returned ID and DOB corrections, advance from `flow1_dispatch` to `flow2_dispatch` |
-| `GET /jobs/{id}/flow2/haider.xlsx` | Download Flow 2's dispatch file for Haider (ID Corrections + DOB Mistakes sheets, only rows still invalid after Naresh's fixes) while parked at `flow2_dispatch`; repeatable, no side effects |
-| `POST /jobs/{id}/flow3/haider-response` | multipart `corrections_file` (Name/Mobile/CMS, no DOB) + optional `ids_file` (ID Corrections + DOB Mistakes second pass) — Flow 3's merge step: apply both of Haider's returned files, advance past `flow2_dispatch` into `final_id_check`/`default_id` |
+| `GET /jobs/{id}/stage1/haider.xlsx` | Download Haider's Stage 1 file (Mobile flagged rows + blank CMS sheet) while parked at `stage1_dispatch`; repeatable, no side effects |
+| `GET /jobs/{id}/stage1/naresh.xlsx` | Download Naresh's Stage 1 file (ID Corrections + DOB Corrections sheets, every currently invalid row of each) while parked at `stage1_dispatch`; repeatable, no side effects |
+| `POST /jobs/{id}/stage2/naresh-response` | multipart `file` (2 sheets: ID Corrections, DOB Corrections) — Stage 2's merge step: apply Naresh's returned ID and DOB corrections, advance from `stage1_dispatch` through the `name_validate` gate to `stage2_dispatch` |
+| `GET /jobs/{id}/stage2/haider.xlsx` | Download Stage 2's dispatch file for Haider (Name Validation + ID Corrections + DOB Corrections sheets) while parked at `stage2_dispatch`; repeatable, no side effects |
+| `POST /jobs/{id}/stage3/haider-response` | multipart `cms_mobile_file` (flat: `ACCOUNT_NUMBER`+`PHONE_NUMBER`) + `cms_card_file` (flat: `ACCOUNT_NUMBER`+`CMS_UPDATE_COLS`, `DATE_OPENED` as M/D/YYYY) + `haider_corrections_file` (3 sheets: Name/ID/DOB) — Stage 3's merge step: apply all three, advance past `stage2_dispatch` into `final_id_check`/`default_id` |
 | `POST /jobs/{id}/confirm` | Resolve a `confirm` stage in the background |
 | `GET /jobs/{id}/download` | Download the final dataset as `{job_id}_final.xlsx` once the job reaches `done` |
 | `GET /jobs/{id}/audit/download` | Download the audit trail as `{job_id}_audit.xlsx` |
 
 `GET /jobs?stage_id=<id>` filters the job list to jobs currently parked at
-that stage — used by the Flow 2/3 pages' job pickers (`stage_id` omitted
+that stage — used by the Stage 2/3 pages' job pickers (`stage_id` omitted
 keeps the normal unfiltered dashboard listing).
 
-See "Flow 1/2/3 reviewer handoff" below for the shape of the flow xlsx
+See "Stage 1/2/3 reviewer handoff" below for the shape of the stage xlsx
 files. The final `.xlsx` download is different: by then there's nothing
-left to review, so it's one flat sheet with every column, the same shape as
-the original raw import — see `_write_flat_xlsx` in `app/helpers.py`.
+left to review, so it's one flat sheet with every column except
+`SMART_IDENTIFIER` (an internal reference used only to help Naresh match ID
+documents, dropped before delivery), the same shape as the original raw
+import — see `_write_flat_xlsx` in `app/helpers.py`.
 
 Calling an action endpoint again while a job is already processing gets a
 `409 Conflict` instead of starting a second run.
 
-## Flow 1/2/3 reviewer handoff
+## Stage 1/2/3 reviewer handoff
 
 `cms_integration` and the old `send_email` stub are gone. In their place,
 after `mobile_fill` the pipeline hands off to two named external reviewers
-over three separate, self-contained flows (not one continuous chain — each
-one is its own input → merge → verify → dispatch mini-pipeline), matched by
-`ACCOUNT_NUMBER` and only overwriting a cell where the response actually
-provides a non-blank value (a reviewer not fixing every row is expected, not
-an error):
+plus two direct CMS system exports, over three separate, self-contained
+stages (not one continuous chain — each one is its own input → merge →
+verify → dispatch mini-pipeline), matched by `ACCOUNT_NUMBER` and only
+overwriting a cell where the response actually provides a non-blank value
+(a reviewer not fixing every row is expected, not an error):
 
-DOB travels with IDs, not with Name/Mobile/CMS: Naresh gets first crack at
-both (one workbook, ID Corrections + DOB Mistakes sheets), and whatever he
-can't resolve of either gets dispatched to Haider as a second-pass file in
-the same 2-sheet shape. Haider's own corrections file only ever carries
-Name/Mobile/CMS.
+DOB travels with IDs, not with Name: Naresh gets first crack at both (one
+workbook, ID Corrections + DOB Corrections sheets), and whatever he can't
+resolve of either gets dispatched to Haider as a second-pass file in the
+same shape, bundled alongside Name. CMS mobile numbers and card details no
+longer come from a reviewer typing them in by hand — they arrive as two
+direct exports from the CMS system itself at Stage 3.
 
-1. **Flow 1** (`flow1_dispatch`, in the normal job wizard): download
-   `flow1_haider.xlsx` (Name Validation / Missing Mobile Numbers sheets, cut
-   down to currently-flagged rows, plus a CMS Data Integration sheet listing
-   every account with blank `CMS_UPDATE_COLS` for Haider to fill in by hand)
-   and `flow1_naresh.xlsx` (ID Corrections + DOB Mistakes sheets, every
-   currently invalid row of each). Share both manually; Flow 1 stops here
-   for good — nothing advances it further from inside Flow 1 itself.
-2. **Flow 2** (a separate page, its job picker only listing jobs parked at
-   `flow1_dispatch`): input Naresh's completed file, merge his ID and DOB
-   fixes, recheck both, dispatch — `POST /flow2/naresh-response` does all of
-   that in one call and advances the job to `flow2_dispatch`, generating
-   `flow2_haider.xlsx` (same 2-sheet shape) from just the rows still
-   invalid. Once applied, the page hands the job back to the normal wizard,
-   which renders Flow 2's own dispatch screen (same one you'd see resuming
-   the job normally) with a "Next: Flow 3" shortcut.
-3. **Flow 3** (a separate page, its job picker only listing jobs parked at
-   `flow2_dispatch`): input Haider's two files, merge them into the raw
-   data — `POST /flow3/haider-response` applies his corrections (Name/
-   Mobile/CMS) and his ID+DOB second-pass response (if the job still needs
-   one; optional otherwise) in one call. The job then proceeds into the
-   unchanged `final_id_check` (auto-bypassed, as always) and lands on the
-   existing `default_id` confirm gate — Flow 3 hands the job to the normal
-   wizard at this point too, so the confirm-click and final-output screens
-   the operator sees are the *same shared screens* every job uses, not a
+1. **Stage 1** (`stage1_dispatch`, in the normal job wizard): download
+   `stage1_haider.xlsx` (Missing Mobile Numbers sheet, cut down to
+   currently-flagged rows, plus a CMS Data Integration sheet listing every
+   account with blank `CMS_UPDATE_COLS` as a starting point — the real CMS
+   data arrives later as its own two export files and takes precedence) and
+   `stage1_naresh.xlsx` (ID Corrections + DOB Corrections sheets, every
+   currently invalid row of each). Share both manually; Stage 1 stops here
+   for good — nothing advances it further from inside Stage 1 itself. Name
+   issues haven't been checked yet at this point (see `name_validate` below)
+   so they're never in this file.
+2. **Stage 2** (a separate page, its job picker only listing jobs parked at
+   `stage1_dispatch`): input Naresh's completed file, merge his ID and DOB
+   fixes, recheck both — `POST /stage2/naresh-response` does that in one
+   call and advances the job past `stage1_dispatch`. The job then passes
+   through `name_validate` (a real manual-review gate, currently
+   auto-bypassed like every other manual_edit stage while
+   `BYPASS_MANUAL_EDIT_STAGES = True` in `app/background.py`) before landing
+   on `stage2_dispatch`, generating `stage2_haider.xlsx` (Name Validation +
+   ID Corrections + DOB Corrections sheets) from whatever's still flagged.
+   Once applied, the page hands the job back to the normal wizard, which
+   renders Stage 2's own dispatch screen (same one you'd see resuming the
+   job normally) with a "Next: Stage 3" shortcut.
+3. **Stage 3** (a separate page, its job picker only listing jobs parked at
+   `stage2_dispatch`): input three files — CMS Mobile Numbers export (flat:
+   `ACCOUNT_NUMBER`+`PHONE_NUMBER`), CMS Card Details export (flat:
+   `ACCOUNT_NUMBER`+`CMS_UPDATE_COLS`, `DATE_OPENED` arrives as M/D/YYYY and
+   gets normalised to YYYY-MM-DD), and Haider's corrected file (3 sheets:
+   Name/ID/DOB) — `POST /stage3/haider-response` applies all three, in that
+   order, in one call. The job then proceeds into the unchanged
+   `final_id_check` (auto-bypassed, as always) and lands on the existing
+   `default_id` confirm gate — Stage 3 hands the job to the normal wizard at
+   this point too, so the confirm-click and final-output screens the
+   operator sees are the *same shared screens* every job uses, not a
    separate copy.
 
-See `app/pipeline/flow_merge.py` for the merge logic and
-`app/helpers.py`'s `_write_flow1_haider_xlsx` / `_write_flow1_naresh_xlsx` /
-`_write_flow2_haider_xlsx` for the xlsx writers.
+See `app/pipeline/stage_merge.py` for the merge logic and
+`app/helpers.py`'s `_write_stage1_haider_xlsx` / `_write_stage1_naresh_xlsx` /
+`_write_stage2_haider_xlsx` for the xlsx writers.
 
 ## Stage Tester (hidden page — not linked in the app)
 

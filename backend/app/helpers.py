@@ -5,11 +5,11 @@ from fastapi import HTTPException
 from openpyxl.utils import get_column_letter
 
 from . import pipeline, store
-from .pipeline import flow_merge
+from .pipeline import stage_merge
 from .schemas import EditItem
 
 # Flip to True to include the validation_notes column in exported Excel
-# sheets (flow handoff files + manual review workbook). Off by default.
+# sheets (stage handoff files + manual review workbook). Off by default.
 VALIDATION_NOTES: bool = False
 
 
@@ -22,11 +22,29 @@ def _autofit_worksheet(worksheet, df: pd.DataFrame, *, min_width: int = 8, max_w
         worksheet.column_dimensions[get_column_letter(i)].width = min(width, max_width)
 
 
+def _live_stage_title(stage_id: str) -> str | None:
+    from .pipeline.registry import STAGES
+    return {s["id"]: s["title"] for s in STAGES}.get(stage_id)
+
+
 def _current_stage(status: dict) -> dict | None:
     idx = status["stage_index"]
     if idx >= len(status["stages"]):
         return None
-    return status["stages"][idx]
+    # The real stage dict, not a copy -- callers mutate this in place
+    # (cur["status"] = "done", history entries keyed off cur["id"]) and rely
+    # on that persisting when the job status is saved. Re-resolve the title
+    # from the live registry instead of trusting whatever was snapshotted
+    # into this job's status at creation time -- otherwise a job created
+    # before a stage got renamed keeps showing the old title forever. This
+    # also self-heals the on-disk snapshot the next time it's saved, which
+    # is a feature, not a side effect: no reason to keep serving a stale
+    # title once we know the live one.
+    stage = status["stages"][idx]
+    live_title = _live_stage_title(stage.get("id"))
+    if live_title:
+        stage["title"] = live_title
+    return stage
 
 
 def _require_job(job_id: str) -> dict:
@@ -42,6 +60,11 @@ def _public_job_status(status: dict) -> dict:
         key: value for key, value in status.items()
         if key not in {"audit", "drafts", "checkpoints"}
     }
+    if "stages" in public_status:
+        public_status["stages"] = [
+            {**s, "title": _live_stage_title(s.get("id")) or s["title"]}
+            for s in public_status["stages"]
+        ]
     return public_status | {
         "audit_event_count": len(status.get("audit", [])),
         "rollback_available": bool(rollback_targets),
@@ -107,14 +130,14 @@ def _history_metrics(status: dict, stage_id: str) -> dict:
 
 def _quality_summary(df: pd.DataFrame, status: dict) -> dict:
     audit = status.get("audit", [])
-    # A real correction now comes from Flow 2/3 (Naresh/Haider) or, if
+    # A real correction now comes from Stage 2/3 (Naresh/Haider) or, if
     # manual-edit stages are ever re-enabled, an operator's inline edit --
     # never from a fixed stage id or exact label string, both of which
     # stopped matching once corrections moved off the old per-field manual
     # stages. Every audit event records who made it, so "not System" is the
     # one signal that still means "a person actually fixed this."
     names_corrected = len({event["row_key"] for event in audit
-                           if event.get("field") in flow_merge.NAME_COLS and event.get("operator") != "System"})
+                           if event.get("field") in stage_merge.NAME_COLS and event.get("operator") != "System"})
     generated_ids = len({event["row_key"] for event in audit
                          if event.get("stage") == "default_id" and event.get("field") == "ID_NUMBER"})
     operator_corrections = len({(event["row_key"], event["field"]) for event in audit
@@ -149,7 +172,7 @@ def _validate_edit_items(df: pd.DataFrame, cfg: dict, edits: list[EditItem]):
 
 
 def _write_filtered_sheet(writer, sheet_name: str, df: pd.DataFrame, mask: pd.Series, cols: list[str], reasons_fn):
-    """One flow-handoff sheet: ACCOUNT_NUMBER + `cols`, cut down to the
+    """One stage-handoff sheet: ACCOUNT_NUMBER + `cols`, cut down to the
     flagged rows, with a validation_notes column explaining why each row
     is there."""
     sheet_df = df.loc[mask]
@@ -161,62 +184,81 @@ def _write_filtered_sheet(writer, sheet_name: str, df: pd.DataFrame, mask: pd.Se
     _autofit_worksheet(writer.sheets[sheet_name], sheet)
 
 
-def _write_flow1_haider_xlsx(df: pd.DataFrame, out_path) -> None:
-    """Flow 1 dispatch file for Haider: Name/Mobile sheets cut down to
+def _write_stage1_haider_xlsx(df: pd.DataFrame, out_path) -> None:
+    """Stage 1 dispatch file for Haider: Mobile sheet cut down to
     currently-flagged rows, plus a CMS Data Integration sheet listing every
-    account with the CMS columns blank for him to fill in by hand -- CMS is
-    no longer an automated upload merge, Haider is the sole source now. DOB
-    goes to Naresh instead (_write_ids_and_dob_xlsx below), not here."""
+    account with the CMS columns blank for him to fill in by hand as a
+    starting point -- the real CMS mobile/card data arrives later as its own
+    two export files in Stage 3 and takes precedence over anything here. DOB
+    goes to Naresh instead (_write_ids_and_dob_xlsx below), not here. Name
+    validation hasn't run yet at this point in the pipeline -- it's deferred
+    to Stage 2 (see registry.py's STAGES), so it isn't in this file either."""
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         _write_filtered_sheet(
-            writer, flow_merge.SHEET_NAME_VALIDATE, df, pipeline.mask_name_invalid(df),
-            flow_merge.NAME_COLS, pipeline.validation_reasons_name,
-        )
-        _write_filtered_sheet(
-            writer, flow_merge.SHEET_MISSING_MOBILE, df, pipeline.mask_mobile_missing(df),
-            flow_merge.MOBILE_COLS, pipeline.validation_reasons_mobile,
+            writer, stage_merge.SHEET_MISSING_MOBILE, df, pipeline.mask_mobile_missing(df),
+            stage_merge.MOBILE_COLS, pipeline.validation_reasons_mobile,
         )
 
         cms_sheet = df[["ACCOUNT_NUMBER"]].copy()
         for col in pipeline.CMS_UPDATE_COLS:
             cms_sheet[col] = ""
-        cms_sheet.to_excel(writer, sheet_name=flow_merge.SHEET_CMS, index=False)
-        _autofit_worksheet(writer.sheets[flow_merge.SHEET_CMS], cms_sheet)
+        cms_sheet.to_excel(writer, sheet_name=stage_merge.SHEET_CMS, index=False)
+        _autofit_worksheet(writer.sheets[stage_merge.SHEET_CMS], cms_sheet)
 
 
 def _write_ids_and_dob_xlsx(df: pd.DataFrame, out_path) -> None:
-    """Shared shape for Flow 2's Naresh input file and Flow 2's dispatch
-    output for Haider: 2 sheets, ID Corrections + DOB Mistakes, each cut down
-    to currently-invalid rows only. Naresh handles both together; whatever
-    either sheet leaves invalid becomes Haider's second-pass file in Flow 3."""
+    """Shared shape for Stage 2's Naresh input file and Stage 2's dispatch
+    output for Haider: 2 sheets, ID Corrections + DOB Corrections, each cut
+    down to currently-invalid rows only. Naresh handles both together;
+    whatever either sheet leaves invalid becomes Haider's second-pass file
+    in Stage 3."""
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         _write_filtered_sheet(
-            writer, flow_merge.SHEET_ID_CORRECTIONS, df, pipeline.mask_id_only_invalid(df),
-            flow_merge.ID_COLS, pipeline.validation_reasons_id_only,
+            writer, stage_merge.SHEET_ID_CORRECTIONS, df, pipeline.mask_id_only_invalid(df),
+            stage_merge.ID_COLS, pipeline.validation_reasons_id_only,
         )
         _write_filtered_sheet(
-            writer, flow_merge.SHEET_DOB_MISTAKES, df, pipeline.mask_dob_invalid(df),
-            flow_merge.DOB_COLS, pipeline.validation_reasons_dob_only,
+            writer, stage_merge.SHEET_DOB_CORRECTIONS, df, pipeline.mask_dob_invalid(df),
+            stage_merge.DOB_COLS, pipeline.validation_reasons_dob_only,
         )
 
 
-def _write_flow1_naresh_xlsx(df: pd.DataFrame, out_path) -> None:
+def _write_stage1_naresh_xlsx(df: pd.DataFrame, out_path) -> None:
     _write_ids_and_dob_xlsx(df, out_path)
 
 
-def _write_flow2_haider_xlsx(df: pd.DataFrame, out_path) -> None:
-    _write_ids_and_dob_xlsx(df, out_path)
+def _write_stage2_haider_xlsx(df: pd.DataFrame, out_path) -> None:
+    """Stage 2 dispatch file for Haider: Name Validation, ID Corrections, and
+    DOB Corrections sheets -- everything still invalid after Naresh's pass,
+    plus the name issues deferred from Stage 1. CMS/Mobile aren't here; those
+    now come from the two direct CMS exports at Stage 3."""
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        _write_filtered_sheet(
+            writer, stage_merge.SHEET_NAME_VALIDATE, df, pipeline.mask_name_invalid(df),
+            stage_merge.NAME_COLS, pipeline.validation_reasons_name,
+        )
+        _write_filtered_sheet(
+            writer, stage_merge.SHEET_ID_CORRECTIONS, df, pipeline.mask_id_only_invalid(df),
+            stage_merge.ID_COLS, pipeline.validation_reasons_id_only,
+        )
+        _write_filtered_sheet(
+            writer, stage_merge.SHEET_DOB_CORRECTIONS, df, pipeline.mask_dob_invalid(df),
+            stage_merge.DOB_COLS, pipeline.validation_reasons_dob_only,
+        )
 
 
 def _write_flat_xlsx(df: pd.DataFrame, out_path) -> None:
     """Write the current dataset as a single flat sheet with every column --
     the same shape as the original raw import. Used for the final download
     once the pipeline is done: by then there's nothing left to review, so
-    the topic-split, flagged-rows-only format used for the flow handoffs
-    (_write_flow1_haider_xlsx and friends) doesn't apply."""
+    the topic-split, flagged-rows-only format used for the stage handoffs
+    (_write_stage1_haider_xlsx and friends) doesn't apply.
+    SMART_IDENTIFIER is dropped here -- it's an internal reference used only
+    to help Naresh match ID documents, not part of the delivered dataset."""
+    out_df = df.drop(columns=["SMART_IDENTIFIER"], errors="ignore")
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="Final Output", index=False)
-        _autofit_worksheet(writer.sheets["Final Output"], df)
+        out_df.to_excel(writer, sheet_name="Final Output", index=False)
+        _autofit_worksheet(writer.sheets["Final Output"], out_df)
 
 
 def _upload_metrics(df: pd.DataFrame, ref_df: pd.DataFrame) -> dict:

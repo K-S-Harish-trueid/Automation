@@ -36,8 +36,8 @@ def mask_id_dob_invalid(df: pd.DataFrame) -> pd.Series:
 
 
 def mask_dob_invalid(df: pd.DataFrame) -> pd.Series:
-    """DOB-only half of mask_id_dob_invalid -- used by the Flow 1 Haider
-    handoff, which reviews DOB separately from ID (Naresh's Flow 2 sheet)."""
+    """DOB-only half of mask_id_dob_invalid -- used by the Stage 1 Naresh
+    handoff, which reviews DOB separately from ID."""
     return ~compute_dob_validity(df)
 
 

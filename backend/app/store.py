@@ -371,9 +371,12 @@ def list_job_summaries(stage_id: str | None = None) -> list[dict]:
     """Cheap per-job overview for the dashboard: reads status.json (small) and
     only Parquet metadata (not the full dataframe) for row counts. Pass
     `stage_id` to only return jobs currently parked at that stage (used by
-    the Flow 2/3 intake pages' job pickers) -- default (None) keeps the
+    the Stage 2/3 intake pages' job pickers) -- default (None) keeps the
     unfiltered dashboard listing."""
     _ensure_jobs_dir()
+    from .pipeline.registry import STAGES
+    stage_title_map = {s["id"]: s["title"] for s in STAGES}
+
     summaries = []
     for job_dir in JOBS_DIR.iterdir():
         if not job_dir.is_dir():
@@ -397,13 +400,17 @@ def list_job_summaries(stage_id: str | None = None) -> list[dict]:
                 row_count = pq.ParquetFile(parquet_path).metadata.num_rows
             except Exception:
                 row_count = None
+        # Title comes from the live registry, not whatever was snapshotted
+        # into this job's status at creation time -- see helpers.py's
+        # _live_stage_title for why.
+        stage_title = stage_title_map.get(stage["id"], stage["title"]) if stage else "Final Output"
         summaries.append({
             "job_id": job_dir.name,
             "filename": status.get("filename", ""),
             "created_at": status.get("created_at"),
             "stage_id": stage["id"] if stage else "done",
-            "stage_title": stage["title"] if stage else "Final Output",
-            "flow": stage.get("flow") if stage else None,
+            "stage_title": stage_title,
+            "stage": stage.get("stage") if stage else None,
             "stage_index": stage_index,
             "total_stages": len(stages),
             "is_done": _is_done(status),

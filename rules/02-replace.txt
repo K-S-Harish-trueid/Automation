@@ -1,4 +1,4 @@
-STEP 2 -- replace ("Data Consistency Update" / historical override)
+STEP 2 -- replace ("Historical Override")
 ================================================================================
 TYPE      upload (skippable)
 CODE      backend/app/pipeline/stages/replace.py :: stage_replace_reference,

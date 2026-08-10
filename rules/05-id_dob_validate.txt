@@ -1,4 +1,4 @@
-STEP 5 -- id_dob_validate ("ID & DoB Validation")
+STEP 5 -- id_dob_validate ("Missing ID & DoB")
 ================================================================================
 TYPE      manual_edit (pages 200 flagged rows at a time)
 CODE      backend/app/pipeline/stages/id_dob_validate.py :: compute_dob_validity,

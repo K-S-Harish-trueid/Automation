@@ -79,10 +79,10 @@ _RULES_PANELS = {
         "note": None,
     },
     "final_id_check": {
-        "intro": "Same ID_TYPE/ID_NUMBER rule as ID & DoB Validation (DOB is NOT re-checked here):",
+        "intro": "Same ID_TYPE/ID_NUMBER rule as Missing ID & DoB (DOB is NOT re-checked here):",
         "points": [
             "ID_TYPE must be Passport / National Id / Civil Id",
-            "ID_NUMBER must match that type's format (same rules as ID & DoB Validation)",
+            "ID_NUMBER must match that type's format (same rules as Missing ID & DoB)",
         ],
         "note": None,
     },
