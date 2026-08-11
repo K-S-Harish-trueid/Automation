@@ -9,9 +9,12 @@ aman/
 llms/data/
 .vscode/
 TODO
+DONE
 Current Run/
 dummy_data/Historical_Dataset.xlsx
 frontend_backup_*/
 testing/
 dummy_data/downloads/
 ngrok_live.log
+*.log
+deliverables.txt

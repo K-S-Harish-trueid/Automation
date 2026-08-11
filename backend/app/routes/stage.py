@@ -42,12 +42,15 @@ def current_stage_detail(job_id: str, page: int = 1):
     stage = _current_stage(status)
 
     if stage is None or stage["type"] == "done":
+        # One read of the audit log, reused for the quality summary's tallies
+        # and the preview/count below, instead of three separate reads.
+        audit = store.read_audit_events(job_id)
         return {
             "type": "done",
             "row_count": len(df),
-            "quality_summary": _quality_summary(df, status),
-            "audit_event_count": len(status.get("audit", [])),
-            "audit_preview": status.get("audit", [])[-30:],
+            "quality_summary": _quality_summary(df, status, audit),
+            "audit_event_count": len(audit),
+            "audit_preview": audit[-30:],
         }
 
     if stage["type"] == "upload":
@@ -101,7 +104,7 @@ def current_stage_detail(job_id: str, page: int = 1):
         reasons = cfg["reasons"](df)
         visible_fields = set(cfg["context_cols"] + cfg["editable_cols"])
         labels_by_row: dict[int, list[str]] = {}
-        for event in status.get("audit", []):
+        for event in store.read_audit_events(job_id):
             row_key = event.get("row_key")
             if row_key in page_df.index and event.get("field") in visible_fields and event.get("label"):
                 labels_by_row.setdefault(row_key, []).append(event["label"])

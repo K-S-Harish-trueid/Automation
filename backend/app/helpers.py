@@ -8,8 +8,14 @@ from . import pipeline, store
 from .pipeline import stage_merge
 from .schemas import EditItem
 
-# Flip to True to include the validation_notes column in exported Excel
-# sheets (stage handoff files + manual review workbook). Off by default.
+# Default for the manual review workbook download (/api/jobs/{id}/workbook,
+# in routes/stage.py) -- that route walks every manual_edit stage reached so
+# far generically and doesn't know which one specifically needs notes, so it
+# just uses this one flag. Off by default.
+# The per-sheet stage handoff files (_write_stage1_haider_xlsx and friends,
+# below) don't use this -- each sheet passes its own `notes` argument to
+# _write_filtered_sheet instead, so it can be turned on for just the sheets
+# that need it (see _write_stage2_haider_xlsx's DOB Corrections sheet).
 VALIDATION_NOTES: bool = False
 
 
@@ -54,19 +60,30 @@ def _require_job(job_id: str) -> dict:
 
 
 def _public_job_status(status: dict) -> dict:
-    """Keep large audit and draft data out of the polling response."""
+    """Keep large draft data out of the polling response. Audit never lives
+    in `status` at all (see store.append_audit_events), so there's nothing
+    to strip for that anymore -- audit_event_count below reads it from its
+    own file, cheaply (a line count, not a full parse)."""
     rollback_targets = store.get_rollback_targets(status["job_id"])
     public_status = {
         key: value for key, value in status.items()
-        if key not in {"audit", "drafts", "checkpoints"}
+        if key not in {"drafts", "checkpoints"}
     }
     if "stages" in public_status:
+        from .pipeline.registry import HIDDEN_STAGE_IDS
         public_status["stages"] = [
-            {**s, "title": _live_stage_title(s.get("id")) or s["title"]}
+            {
+                **s,
+                "title": _live_stage_title(s.get("id")) or s["title"],
+                # Display-only: the stage still runs normally, this just
+                # tells the frontend not to show it in the sidebar/progress
+                # meter (see registry.py's HIDDEN_STAGE_IDS).
+                "hidden": s.get("id") in HIDDEN_STAGE_IDS,
+            }
             for s in public_status["stages"]
         ]
     return public_status | {
-        "audit_event_count": len(status.get("audit", [])),
+        "audit_event_count": store.count_audit_events(status["job_id"]),
         "rollback_available": bool(rollback_targets),
         "rollback_label": rollback_targets[-1]["label"] if rollback_targets else "",
         "rollback_targets": rollback_targets,
@@ -91,7 +108,9 @@ def _append_audit_events(
     source_file: str,
     operator: str,
 ):
-    """Store field-level changes without changing any pipeline decision or value."""
+    """Store field-level changes without changing any pipeline decision or
+    value. Appended straight to the job's audit.jsonl (store.py) -- never
+    held on `status` itself, so callers don't need to persist it separately."""
     fields = fields or [column for column in after.columns if column in before.columns]
     account_numbers = after.get("ACCOUNT_NUMBER", pd.Series("", index=after.index))
     events = []
@@ -117,7 +136,7 @@ def _append_audit_events(
                 "source_file": source_file,
                 "label": event_label,
             })
-    status.setdefault("audit", []).extend(events)
+    store.append_audit_events(status["job_id"], events)
     return events
 
 
@@ -128,8 +147,7 @@ def _history_metrics(status: dict, stage_id: str) -> dict:
     return {}
 
 
-def _quality_summary(df: pd.DataFrame, status: dict) -> dict:
-    audit = status.get("audit", [])
+def _quality_summary(df: pd.DataFrame, status: dict, audit: list[dict]) -> dict:
     # A real correction now comes from Stage 2/3 (Naresh/Haider) or, if
     # manual-edit stages are ever re-enabled, an operator's inline edit --
     # never from a fixed stage id or exact label string, both of which
@@ -171,13 +189,17 @@ def _validate_edit_items(df: pd.DataFrame, cfg: dict, edits: list[EditItem]):
             raise HTTPException(400, f"row_key {edit.row_key} not found")
 
 
-def _write_filtered_sheet(writer, sheet_name: str, df: pd.DataFrame, mask: pd.Series, cols: list[str], reasons_fn):
+def _write_filtered_sheet(
+    writer, sheet_name: str, df: pd.DataFrame, mask: pd.Series, cols: list[str], reasons_fn,
+    *, notes: bool = False,
+):
     """One stage-handoff sheet: ACCOUNT_NUMBER + `cols`, cut down to the
-    flagged rows, with a validation_notes column explaining why each row
-    is there."""
+    flagged rows, optionally with a validation_notes column explaining why
+    each row is there -- pass notes=True at the call site for whichever
+    sheets actually need it, off by default everywhere else."""
     sheet_df = df.loc[mask]
     sheet = sheet_df[["ACCOUNT_NUMBER", *cols]].copy()
-    if VALIDATION_NOTES:
+    if notes:
         reasons = reasons_fn(df)
         sheet["validation_notes"] = [", ".join(reasons.get(int(k), [])) for k in sheet_df.index]
     sheet.to_excel(writer, sheet_name=sheet_name, index=False)
@@ -231,7 +253,9 @@ def _write_stage2_haider_xlsx(df: pd.DataFrame, out_path) -> None:
     """Stage 2 dispatch file for Haider: Name Validation, ID Corrections, and
     DOB Corrections sheets -- everything still invalid after Naresh's pass,
     plus the name issues deferred from Stage 1. CMS/Mobile aren't here; those
-    now come from the two direct CMS exports at Stage 3."""
+    now come from the two direct CMS exports at Stage 3.
+    DOB Corrections carries notes (why each DOB is flagged) -- Haider needs
+    that context on the DOB sheet specifically; Name/ID don't."""
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         _write_filtered_sheet(
             writer, stage_merge.SHEET_NAME_VALIDATE, df, pipeline.mask_name_invalid(df),
@@ -243,7 +267,7 @@ def _write_stage2_haider_xlsx(df: pd.DataFrame, out_path) -> None:
         )
         _write_filtered_sheet(
             writer, stage_merge.SHEET_DOB_CORRECTIONS, df, pipeline.mask_dob_invalid(df),
-            stage_merge.DOB_COLS, pipeline.validation_reasons_dob_only,
+            stage_merge.DOB_COLS, pipeline.validation_reasons_dob_only, notes=True,
         )
 
 

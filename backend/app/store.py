@@ -173,7 +173,6 @@ def create_job(raw: bytes, filename: str) -> str:
         "stage_index": 0,
         "stages": [{**s, "status": "pending"} for s in STAGES],
         "history": [],
-        "audit": [],
         "drafts": {},
         "checkpoints": [],
     }
@@ -211,11 +210,69 @@ def set_df(job_id: str, df: pd.DataFrame):
 def get_status(job_id: str) -> dict:
     _ensure_loaded(job_id)
     status = _JOBS[job_id]["status"]
-    # Snapshots created before audit/draft support remain readable.
-    status.setdefault("audit", [])
+    # Snapshots created before draft support remain readable. Audit events
+    # don't live in this dict at all -- see append_audit_events/
+    # read_audit_events below, they're append-only in their own file.
     status.setdefault("drafts", {})
     status.setdefault("checkpoints", [])
     return status
+
+
+# ---- Audit log: append-only, kept out of status.json ------------------------
+#
+# A large job can generate hundreds of thousands of field-level audit events
+# (every changed cell on every row, across every stage). Storing that array
+# inside status.json meant every persist() call -- dozens of times per run --
+# rewrote the *entire* growing log from scratch, and every dashboard listing
+# (list_job_summaries, which runs on every /api/jobs page load) had to parse
+# right through it just to read a handful of small fields. Keeping audit in
+# its own append-only file fixes both: new events are appended, not
+# rewritten, and status.json stays small and fast regardless of audit size.
+#
+# This log is never truncated, including on rollback -- a rolled-back
+# checkpoint's audit entries stay on record rather than being silently
+# discarded, so the file is a complete historical record, not a mirror of
+# "what's true about the current data right now." That's a deliberate
+# tradeoff for simplicity/safety over the alternative (checkpoints owning a
+# truncation cursor into a shared file), which is real but sharper -- get a
+# truncation point wrong and you've destroyed audit history, not just kept
+# some extra. Nothing reads this file expecting it to only reflect
+# never-undone changes today, so this doesn't change any current behavior.
+
+def _audit_path(job_id: str) -> Path:
+    return _job_dir(job_id) / "audit.jsonl"
+
+
+def append_audit_events(job_id: str, events: list[dict]) -> None:
+    if not events:
+        return
+    with _audit_path(job_id).open("a", encoding="utf-8") as f:
+        for event in events:
+            f.write(json.dumps(event, separators=(",", ":")))
+            f.write("\n")
+
+
+def read_audit_events(job_id: str) -> list[dict]:
+    path = _audit_path(job_id)
+    if not path.exists():
+        return []
+    events = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                events.append(json.loads(line))
+    return events
+
+
+def count_audit_events(job_id: str) -> int:
+    """Line count without parsing each one -- cheap even at hundreds of
+    thousands of events, for callers that only need the number."""
+    path = _audit_path(job_id)
+    if not path.exists():
+        return 0
+    with path.open("rb") as f:
+        return sum(1 for _ in f)
 
 
 def is_processing(job_id: str) -> bool:
@@ -227,7 +284,11 @@ def persist(job_id: str):
     job = _JOBS[job_id]
     d = _job_dir(job_id)
     job["df"].to_parquet(d / "working.parquet", index=False)
-    (d / "status.json").write_text(json.dumps(job["status"], indent=2), encoding="utf-8")
+    # Compact, not pretty-printed -- nobody reads this file by hand, and the
+    # audit log alone can run into hundreds of thousands of entries on a
+    # large job, where indent=2's per-key whitespace is pure size overhead
+    # rewritten on every persist() call.
+    (d / "status.json").write_text(json.dumps(job["status"], separators=(",", ":")), encoding="utf-8")
 
 
 def create_checkpoint(job_id: str, label: str, stage_id: str | None = None) -> dict:
@@ -244,7 +305,7 @@ def create_checkpoint(job_id: str, label: str, stage_id: str | None = None) -> d
     job["df"].to_parquet(checkpoint_dir / "working.parquet", index=False)
     checkpoint_status = deepcopy(status)
     (checkpoint_dir / "status.json").write_text(
-        json.dumps(checkpoint_status, indent=2), encoding="utf-8"
+        json.dumps(checkpoint_status, separators=(",", ":")), encoding="utf-8"
     )
     metadata = {
         "id": checkpoint_id,
@@ -309,10 +370,12 @@ def rollback_to_checkpoint(job_id: str, checkpoint_id: str) -> dict:
 
     restored_status = json.loads(status_path.read_text(encoding="utf-8"))
     restored_status["job_id"] = job_id
-    # Downstream work was created from the state being replaced, so neither
-    # its audit trail nor its later restore points remain valid.
+    # Downstream work was created from the state being replaced, so its
+    # later restore points no longer apply. The audit log is untouched --
+    # it's an append-only historical record (see append_audit_events above),
+    # not part of this snapshot, so rolling back doesn't erase the record of
+    # what happened in the discarded work.
     restored_status["checkpoints"] = checkpoints[:checkpoint_index]
-    restored_status.setdefault("audit", [])
     restored_status.setdefault("drafts", {})
     _JOBS[job_id] = {"df": pd.read_parquet(data_path), "status": restored_status}
     for discarded in checkpoints[checkpoint_index:]:

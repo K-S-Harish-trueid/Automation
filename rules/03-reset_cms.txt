@@ -1,4 +1,4 @@
-STEP 3 -- reset_cms ("Inputs from CMS")
+STEP 3 -- reset_cms ("Inputs required from CMS")
 ================================================================================
 TYPE      auto (runs automatically, no operator input)
 CODE      backend/app/pipeline/stages/reset_cms.py :: stage_reset_cms_fields

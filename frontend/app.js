@@ -446,13 +446,15 @@ function renderProcessingError(e) {
 
 // Stages the sidebar is allowed to show right now: every stage when no scope
 // is set (the master dashboard/wizard view), or only the stages owned by
-// `viewScopeStage` when a job was adopted through the Stage 2/3 page. Keeps
-// each entry's original index into status.stages so "is this the current
-// stage" and rollback-target lookups still line up.
+// `viewScopeStage` when a job was adopted through the Stage 2/3 page --
+// plus never any stage the backend flagged "hidden" (registry.py's
+// HIDDEN_STAGE_IDS; the stage still runs normally, it's just not shown).
+// Keeps each entry's original index into status.stages so "is this the
+// current stage" and rollback-target lookups still line up.
 function visibleStageEntries(status) {
   return status.stages
     .map((stage, index) => ({ stage, index }))
-    .filter(({ stage }) => !viewScopeStage || stage.stage === viewScopeStage);
+    .filter(({ stage }) => !stage.hidden && (!viewScopeStage || stage.stage === viewScopeStage));
 }
 
 function renderStageMeterAndHeader(status) {

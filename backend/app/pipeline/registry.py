@@ -16,6 +16,15 @@ from .stages.reset_cms import stage_reset_cms_fields
 
 RAW_REQUIRED_COLS = list(dict.fromkeys(["ACCOUNT_NUMBER", *REPLACE_MAPPING_COLS, *CMS_UPDATE_COLS]))
 
+# Stage ids to hide from the sidebar/progress meter (helpers.py's
+# _public_job_status flags each stage entry with "hidden": True/False for
+# the frontend to filter on) while still running them exactly as normal --
+# this is purely a display toggle, not a pipeline change. Add/remove ids
+# here to show or hide a stage; empty set shows everything.
+# address_fix is hidden pending a decision on relocating/reworking it --
+# see TODO.
+HIDDEN_STAGE_IDS: set[str] = {"address_fix"}
+
 
 def validate_upload_inputs(stage_id: str, df, ref_df):
     if stage_id == "replace":
@@ -34,7 +43,7 @@ STAGES = [
          "duplicate_handling": "The last row for each duplicated ACCOUNT_NUMBER is used.",
          "unresolved_label": "Accounts not found in this file keep their current values.",
      }},
-    {"id": "reset_cms", "title": "Inputs from CMS", "type": "auto", "stage": 1},
+    {"id": "reset_cms", "title": "Inputs required from CMS", "type": "auto", "stage": 1},
     {"id": "id_dob_validate", "title": "Missing ID & DoB", "type": "manual_edit", "stage": 1},
     {"id": "address_fix", "title": "Address Auto-Fix", "type": "auto", "stage": 1},
     {"id": "mobile_fill", "title": "Missing Mobile Numbers", "type": "manual_edit", "stage": 1},

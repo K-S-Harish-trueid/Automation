@@ -77,15 +77,15 @@ def download_final(job_id: str):
 
 @router.get("/api/jobs/{job_id}/audit")
 def audit_history(job_id: str):
-    status = _require_job(job_id)
-    events = status.get("audit", [])
+    _require_job(job_id)
+    events = store.read_audit_events(job_id)
     return {"count": len(events), "events": events[-250:]}
 
 
 @router.get("/api/jobs/{job_id}/audit/download")
 def download_audit(job_id: str):
-    status = _require_job(job_id)
-    events = status.get("audit", [])
+    _require_job(job_id)
+    events = store.read_audit_events(job_id)
     columns = [
         "account_number", "field", "old_value", "new_value", "stage", "operator",
         "time", "reason", "source_file", "label",
