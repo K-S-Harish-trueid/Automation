@@ -16,6 +16,7 @@ dummy_data/Historical_Dataset.xlsx
 **/Historical_Dataset.xlsx
 frontend_backup_*/
 testing/
+alternate/
 dummy_data/downloads/
 ngrok_live.log
 *.log
