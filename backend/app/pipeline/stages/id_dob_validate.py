@@ -8,25 +8,65 @@ from ..toolbox import _reasons_by_row, _s, compute_id_validity, id_reason_checks
 DEFAULT_DOB_CUTOFF = pd.Timestamp("1905-01-01")
 
 
+def _age_years(reference_date, parsed_dob: pd.Series) -> pd.Series:
+    """Exact calendar age in whole years -- not a days/365.25 approximation,
+    which can misjudge someone within about half a day of an exact
+    year-boundary birthday depending on how leap days happen to land in
+    their specific span (e.g. 18 years and 0 days can compute to 17.9986).
+    `reference_date` may be a single Timestamp (broadcast to every row) or a
+    per-row Series aligned with parsed_dob."""
+    if isinstance(reference_date, pd.Timestamp):
+        ref_year, ref_month, ref_day = reference_date.year, reference_date.month, reference_date.day
+    else:
+        ref_year, ref_month, ref_day = reference_date.dt.year, reference_date.dt.month, reference_date.dt.day
+    years = ref_year - parsed_dob.dt.year
+    birthday_passed = (parsed_dob.dt.month < ref_month) | (
+        (parsed_dob.dt.month == ref_month) & (parsed_dob.dt.day <= ref_day)
+    )
+    return years - (~birthday_passed).astype(int)
+
+
+def _age_years_now(parsed_dob: pd.Series) -> pd.Series:
+    """Current age, as of today -- independent of DATE_OPENED, so a bogus or
+    future-dated DATE_OPENED can't mask someone who is actually under 18
+    right now (see _age_years_at_opening below, which age-at-opening alone
+    couldn't catch)."""
+    return _age_years(pd.Timestamp.today(), parsed_dob)
+
+
+def _opened_parsed(df: pd.DataFrame) -> pd.Series:
+    return parse_dob_series(_s(df, "DATE_OPENED"))
+
+
 def _age_years_at_opening(df: pd.DataFrame, parsed_dob: pd.Series) -> pd.Series:
-    """Age must be checked against when the account was actually opened, not
-    today -- otherwise an account opened for a minor years ago looks fine
-    today once enough time has passed. Falls back to today only where
-    DATE_OPENED itself can't be parsed, so a messy opening date doesn't
-    spuriously flag an otherwise-clean DOB."""
-    opened_parsed = parse_dob_series(_s(df, "DATE_OPENED"))
+    """Age at DATE_OPENED, not today -- otherwise an account opened for a
+    minor years ago looks fine today once enough time has passed. Falls back
+    to today only where DATE_OPENED itself can't be parsed, so a messy
+    opening date doesn't spuriously flag an otherwise-clean DOB. This is
+    deliberately a second, independent check from _age_years_now above --
+    someone can be an adult today (passes that check) and still have had
+    their account opened while they were a minor (fails this one)."""
+    opened_parsed = _opened_parsed(df)
     reference_date = opened_parsed.where(opened_parsed.notna(), pd.Timestamp.today())
-    return (reference_date - parsed_dob).dt.days / 365.25
+    return _age_years(reference_date, parsed_dob)
 
 
 def compute_dob_validity(df: pd.DataFrame) -> pd.Series:
     dob_s = _s(df, "ACCOUNT_HOLDER_DOB")
     avail = series_available(df.get("ACCOUNT_HOLDER_DOB", pd.Series([""] * len(df), index=df.index)))
     parsed = parse_dob_series(dob_s)
+    today = pd.Timestamp.today()
     valid_format = parsed.notna()
     after_cutoff = parsed > DEFAULT_DOB_CUTOFF
-    is_adult = _age_years_at_opening(df, parsed) >= 18
-    return (avail & valid_format & after_cutoff & is_adult).fillna(False)
+    not_future_dob = parsed <= today
+    opened_parsed = _opened_parsed(df)
+    not_future_opened = opened_parsed.isna() | (opened_parsed <= today)
+    is_adult_now = _age_years_now(parsed) >= 18
+    is_adult_at_opening = _age_years_at_opening(df, parsed) >= 18
+    return (
+        avail & valid_format & after_cutoff & not_future_dob & not_future_opened
+        & is_adult_now & is_adult_at_opening
+    ).fillna(False)
 
 
 def mask_id_dob_invalid(df: pd.DataFrame) -> pd.Series:
@@ -43,12 +83,33 @@ def mask_dob_invalid(df: pd.DataFrame) -> pd.Series:
 
 def _dob_reason_checks(df: pd.DataFrame, dob: pd.Series, parsed: pd.Series) -> list[tuple[pd.Series, str]]:
     dob_available = series_available(dob)
-    age_years = _age_years_at_opening(df, parsed)
+    today = pd.Timestamp.today()
+    age_now = _age_years_now(parsed)
+    age_at_opening = _age_years_at_opening(df, parsed)
+    opened_parsed = _opened_parsed(df)
+    # A DOB that's missing/unparseable/before-cutoff/in-the-future is its own
+    # distinct problem -- gate every check below it on the DOB itself being a
+    # real, sane date, so those rows get exactly one DOB-shape reason, not
+    # also a nonsensical age reason derived from a broken date (e.g. a future
+    # DOB producing a negative "current age" that would otherwise misreport
+    # as "currently under 18").
+    sane_dob = parsed.notna() & (parsed > DEFAULT_DOB_CUTOFF) & (parsed <= today)
     return [
         (~dob_available, "DOB is missing."),
         (dob_available & parsed.isna(), "DOB is not a recognized date."),
         (parsed.notna() & (parsed <= DEFAULT_DOB_CUTOFF), "DOB must be after 1 January 1905."),
-        (parsed.notna() & (parsed > DEFAULT_DOB_CUTOFF) & age_years.lt(18),
+        (parsed.notna() & (parsed > DEFAULT_DOB_CUTOFF) & (parsed > today), "DOB is in the future."),
+        # Opening-date plausibility and age are separate, both-can-be-true
+        # facts about a row (unlike the two age checks below, which are two
+        # measurements of one underlying problem) -- both can show together.
+        (sane_dob & opened_parsed.notna() & (opened_parsed > today), "Account opening date is in the future."),
+        # Checked in order: currently under 18 first; only if they've since
+        # turned 18 do we separately check whether the account was opened
+        # while they were still a minor -- so a row gets exactly one of
+        # these two reasons, not both, for what's really one underlying age
+        # problem.
+        (sane_dob & age_now.lt(18), "Customer is currently under 18."),
+        (sane_dob & age_now.ge(18) & age_at_opening.lt(18),
          "Customer was under 18 when the account was opened."),
     ]
 

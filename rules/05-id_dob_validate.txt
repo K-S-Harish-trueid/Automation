@@ -49,15 +49,31 @@ CHECK 3 -- DATE OF BIRTH (ACCOUNT_HOLDER_DOB)
   1. Must be available (see definition above).
      -> reason if not: "DOB is missing."
   2. Must parse as a real date -- tries the exact format
-     "%Y-%m-%d %H:%M:%S" first, then falls back to a flexible day-first
-     parse.
-     -> reason if neither succeeds: "DOB is not a recognized date."
+     "%Y-%m-%d %H:%M:%S" first, then a bare "%Y-%m-%d" (parsed literally,
+     no day-first inference -- year-month-day order is already unambiguous),
+     then a flexible day-first parse as the last resort for anything else
+     (e.g. DD/MM/YYYY-style values).
+     -> reason if none succeed: "DOB is not a recognized date."
   3. Parsed date must be strictly after 1 January 1905 (1905-01-01 itself or
      earlier is treated as a placeholder/default date).
      -> reason: "DOB must be after 1 January 1905."
-  4. Age must be >= 18 years, computed as (DATE_OPENED - DOB) in days /
-     365.25 (falls back to today's date if DATE_OPENED can't be parsed).
-     -> reason: "Customer was under 18 when the account was opened."
+  4. Parsed date must not be in the future.
+     -> reason: "DOB is in the future."
+  5. (Only checked once the DOB itself passes checks 1-4 above -- a broken
+     DOB doesn't also spawn a nonsensical age/opening-date reason derived
+     from it.)
+     a. DATE_OPENED, if it parses, must not be in the future. Independent of
+        the age checks below -- both can be true and both get reported.
+        -> reason: "Account opening date is in the future."
+     b. Two independent age checks, exact calendar age (not a days/365.25
+        approximation):
+        i.  Currently (as of today) >= 18 years old.
+            -> reason: "Customer is currently under 18."
+        ii. Only checked if (i) passes: was >= 18 years old as of
+            DATE_OPENED (falls back to today's date if DATE_OPENED can't be
+            parsed) -- so a row gets at most one of these two age reasons,
+            not both, for what's really one underlying age problem.
+            -> reason: "Customer was under 18 when the account was opened."
 
 EDITABLE FIELDS
 ID_TYPE, ID_NUMBER, ACCOUNT_HOLDER_DOB.

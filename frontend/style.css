@@ -34,6 +34,15 @@
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.4);
   --shadow-glow: 0 0 30px rgba(79, 159, 255, 0.08);
+  /* Pulled out because these exact values are repeated verbatim in more than
+     one rule (including inside a responsive media query) -- a single
+     variable here means the [data-theme="light"] override only has to touch
+     one spot instead of risking a missed duplicate. Dark defaults are
+     unchanged from before, byte-for-byte, so dark mode renders identically. */
+  --btn-primary-bg: #287fbe;
+  --btn-primary-bg-hover: #3897d1;
+  --pending-fill: #182534;
+  --pending-border: rgba(95, 121, 149, 0.72);
 }
 
 * { box-sizing: border-box; }
@@ -149,8 +158,8 @@ button, input { font: inherit; }
   background: transparent;
 }
 .layout.sidebar-collapsed .stage-list li.pending {
-  border-color: rgba(95, 121, 149, 0.72);
-  background: #182534;
+  border-color: var(--pending-border);
+  background: var(--pending-fill);
 }
 .layout.sidebar-collapsed .stage-list li > span:not(.dot) { display: none; }
 .layout.sidebar-collapsed .stage-list li.current { border-color: rgba(79, 140, 255, 0.4); background: var(--accent-soft); }
@@ -232,7 +241,6 @@ button.brand-mark:hover:not(:disabled) {
 .sidebar-label,
 .stage-group-header,
 .main-context,
-.stage-kicker,
 .busy-kicker {
   color: var(--muted);
   font-family: var(--font-mono);
@@ -469,7 +477,7 @@ button.brand-mark:hover:not(:disabled) {
   box-shadow: 0 0 10px rgba(79, 159, 255, 0.3);
 }
 .stage-list li.pending .dot {
-  background: #182534;
+  background: var(--pending-fill);
   border-color: #5f7995;
   box-shadow: 0 0 0 3px rgba(95, 121, 149, 0.08);
 }
@@ -611,6 +619,34 @@ button.brand-mark:hover:not(:disabled) {
   box-shadow: 0 4px 12px rgba(240, 180, 75, 0.15);
 }
 
+/* Light/dark toggle, styled as a circular icon-only sibling of the other
+   .context-action buttons in the header bar. */
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  background: rgba(12, 42, 77, 0.78);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-soft);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 2px 8px rgba(12, 35, 65, 0.28);
+  transition: all 180ms ease;
+}
+
+.theme-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-soft);
+  transform: translateY(-1px) rotate(15deg);
+  box-shadow: 0 4px 12px rgba(79, 159, 255, 0.15);
+}
+
+.theme-icon { width: 16px; height: 16px; }
+
 /* ---------- Card ---------- */
 
 .card {
@@ -695,13 +731,6 @@ button.brand-mark:hover:not(:disabled) {
   font-size: 12px;
 }
 
-.stage-kicker {
-  display: block;
-  margin-bottom: 10px;
-  color: var(--accent-strong);
-  text-shadow: 0 0 20px rgba(116, 217, 234, 0.2);
-}
-
 .stage-title-row {
   display: flex;
   align-items: center;
@@ -732,7 +761,7 @@ button {
   gap: 8px;
   min-height: 42px;
   padding: 9px 18px;
-  background: #287fbe;
+  background: var(--btn-primary-bg);
   border: 1px solid #3f9fdb;
   border-radius: var(--radius-md);
   color: #f8fbff;
@@ -747,7 +776,7 @@ button {
 }
 
 button:hover:not(:disabled) {
-  background: #3897d1;
+  background: var(--btn-primary-bg-hover);
   border-color: var(--accent-strong);
   box-shadow: 0 5px 14px rgba(37, 127, 190, 0.26);
   transform: translateY(-1px);
@@ -942,18 +971,37 @@ input:focus-visible,
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.job-history-download {
+/* "button" prefixed (not just .job-history-download) so these selectors tie
+   the base button/button:hover rules on the element-type point instead of
+   losing to them -- otherwise hovering snapped this back into a full
+   elevated blue button (see min-height/box-shadow/background reset below,
+   all properties the base `button` rule sets that a bare class selector
+   wouldn't reliably beat). Reads as a plain link in both themes. */
+button.job-history-download {
+  display: inline;
+  min-height: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
   color: var(--accent-strong);
   font-family: var(--font-body);
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
-  background: none;
-  border: none;
-  padding: 0;
   cursor: pointer;
+  transform: none;
 }
-.job-history-download:hover { text-decoration: underline; }
+button.job-history-download:hover:not(:disabled),
+button.job-history-download:active:not(:disabled) {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
 
 .upload-preview.preview-valid,
 .upload-preview.preview-invalid {
@@ -1018,13 +1066,13 @@ input:focus-visible,
 .guidance-icon .ui-icon { width: 17px; height: 17px; }
 
 .row-actions > button:not(.secondary) {
-  background: #287fbe;
+  background: var(--btn-primary-bg);
   border-color: rgba(110, 198, 249, 0.7);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 5px 14px rgba(41, 111, 223, 0.28);
 }
 
 .row-actions > button:not(.secondary):hover:not(:disabled) {
-  background: #3897d1;
+  background: var(--btn-primary-bg-hover);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 7px 18px rgba(41, 111, 223, 0.36);
 }
 .file-picker-icon {
@@ -1359,7 +1407,6 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
 }
 
 .completion-header h2 { margin: 2px 0 0; }
-.completion-header .stage-kicker { margin: 0; color: var(--good); text-shadow: 0 0 20px rgba(59, 198, 154, 0.3); }
 .result-summary { border-left-color: var(--good); color: var(--text-soft); font-size: 14px; }
 
 .quality-summary {
@@ -1509,9 +1556,8 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
 .busy-progress-ring-label { position: absolute; inset: 0; display: grid; place-items: center; }
 .busy-percent { color: var(--text); font-size: 22px; font-weight: 700; }
 .busy-text { margin: 18px 0 20px; color: var(--text-soft); font-size: 13px; line-height: 1.5; text-align: center; }
-.busy-check-btn { min-height: 36px; font-size: 12px; }
 
-@keyframes ring-spin { to { transform: rotate(270deg); } }
+@keyframes ring-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .mini-spinner {
   display: inline-block;
@@ -1673,8 +1719,8 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
   }
   .stage-list li.pending,
   .layout.sidebar-collapsed .stage-list li.pending {
-    border-color: rgba(95, 121, 149, 0.72);
-    background: #182534;
+    border-color: var(--pending-border);
+    background: var(--pending-fill);
   }
   .stage-list li > span:not(.dot) { display: none; }
   .stage-list li.current { border-color: rgba(79, 140, 255, 0.5); background: var(--accent-soft); }
@@ -1727,3 +1773,157 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
   .review-controls { display: block; }
   #toast { right: 14px; bottom: 14px; max-width: calc(100vw - 28px); }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Light mode
+   Everything that already renders via var(--...) picks this up for free
+   from the :root swap below. The selectors after that are the spots that
+   used a literal hex/rgba instead of a variable in the base stylesheet --
+   each one is [data-theme="light"] + the exact original selector, so
+   specificity is always a strict superset of the rule it's overriding and
+   source order doesn't matter.
+   ══════════════════════════════════════════════════════════════════════ */
+
+[data-theme="light"] {
+  --canvas: #f5f7fa;
+  --sidebar: #ffffff;
+  --surface: #ffffff;
+  --surface-raised: #f0f2f5;
+  --surface-strong: #e8ecf1;
+  --border: #d7dee6;
+  --border-soft: #e6eaf0;
+  --border-glow: rgba(37, 99, 235, 0.18);
+  --text: #111827;
+  --text-soft: #4b5563;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.08);
+  --accent-glow: rgba(37, 99, 235, 0.12);
+  --good: #059669;
+  --good-soft: rgba(5, 150, 105, 0.08);
+  --warn: #b45309;
+  --warn-soft: rgba(180, 83, 9, 0.08);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.06);
+  --glass-bg: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.10);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.14);
+  --shadow-glow: 0 0 30px rgba(37, 99, 235, 0.10);
+  --btn-primary-bg: #2563eb;
+  --btn-primary-bg-hover: #1d4ed8;
+  --pending-fill: #eef1f5;
+  --pending-border: rgba(100, 116, 139, 0.35);
+}
+
+/* Sidebar */
+[data-theme="light"] .sidebar {
+  background: linear-gradient(180deg, var(--sidebar) 0%, var(--canvas) 100%);
+  border-right-color: var(--border);
+}
+[data-theme="light"] .sidebar::before {
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.25) 0%, rgba(37, 99, 235, 0.08) 40%, transparent 80%);
+}
+[data-theme="light"] .eyebrow { color: var(--accent-strong); }
+[data-theme="light"] .progress-panel {
+  background: rgba(240, 242, 245, 0.8);
+  border-color: var(--border);
+}
+/* :not(.done):not(.current) so this doesn't outrank .meter-seg.done /
+   .meter-seg.current above -- same specificity (two classes each) means
+   whichever comes later in the file would otherwise always win, which was
+   blanking out the green/blue gradients in light mode. */
+[data-theme="light"] .meter-seg:not(.done):not(.current) { background: rgba(0, 0, 0, 0.16); }
+[data-theme="light"] .stage-sidebar-icon { color: #64748b; }
+[data-theme="light"] .stage-list li.pending .stage-status { color: #64748b; }
+[data-theme="light"] .stage-list li.pending .dot { border-color: #94a3b8; }
+[data-theme="light"] .stage-rewind { color: #92400e; }
+
+/* Header bar */
+[data-theme="light"] .main-context {
+  background: var(--glass-bg);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+[data-theme="light"] .context-action {
+  background: rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .context-action:disabled { background: rgba(0, 0, 0, 0.03); }
+[data-theme="light"] .context-rollback:not(:disabled) { color: #b45309; }
+[data-theme="light"] .theme-toggle { background: rgba(0, 0, 0, 0.05); }
+[data-theme="light"] .job-context-id { color: var(--accent-strong); }
+
+/* Card & headings */
+[data-theme="light"] .stage-intro { border-bottom-color: var(--border); }
+[data-theme="light"] .card h2 { text-shadow: none; }
+
+/* Buttons */
+[data-theme="light"] button.secondary { background: rgba(0, 0, 0, 0.04); }
+[data-theme="light"] button.secondary:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.07);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] button.quiet-action:hover:not(:disabled) { background: rgba(0, 0, 0, 0.04); }
+[data-theme="light"] button.draft-action:hover:not(:disabled) { color: var(--accent-strong); }
+[data-theme="light"] button.warning-action { color: #92400e; }
+[data-theme="light"] button.warning-action:hover:not(:disabled) { color: #7c2d12; }
+
+/* File pickers / dropzones */
+[data-theme="light"] .dropzone {
+  background: rgba(37, 99, 235, 0.03);
+  border-color: rgba(37, 99, 235, 0.3);
+}
+[data-theme="light"] .upload-file-group { background: rgba(0, 0, 0, 0.02); }
+[data-theme="light"] .guidance-icon {
+  background: #eef2f7;
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.25);
+}
+[data-theme="light"] .file-picker-icon {
+  background: linear-gradient(145deg, #eef2f7 0%, #f8fafc 100%);
+  color: #2563eb;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+/* Job history */
+[data-theme="light"] .job-history-group td { background: rgba(0, 0, 0, 0.03); }
+
+/* Review table / manual edit */
+[data-theme="light"] .review-stat {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: var(--border);
+}
+[data-theme="light"] .review-stat:hover { background: rgba(0, 0, 0, 0.05); }
+[data-theme="light"] .manual-table .account-cell { color: var(--text); }
+[data-theme="light"] .manual-table tbody tr:hover .account-cell { background: #eef2f7; }
+[data-theme="light"] .manual-table .label-cell { background: rgba(0, 0, 0, 0.02); }
+[data-theme="light"] .data-label-substituted { color: #be123c; }
+[data-theme="light"] .issue-tooltip {
+  background: #fef2f2;
+  border-color: var(--danger);
+  color: #991b1b;
+}
+
+/* Workbook / decision panels */
+[data-theme="light"] .workbook-panel {
+  background: rgba(0, 0, 0, 0.025);
+  border-color: rgba(37, 99, 235, 0.3);
+}
+[data-theme="light"] .workbook-file-input { background: rgba(0, 0, 0, 0.04); }
+[data-theme="light"] .decision-panel,
+[data-theme="light"] .result-summary {
+  background: rgba(0, 0, 0, 0.025);
+}
+[data-theme="light"] .decision-panel { background: rgba(180, 83, 9, 0.05); }
+
+/* Busy overlay */
+[data-theme="light"] .busy-overlay { background: rgba(255, 255, 255, 0.85); }
+[data-theme="light"] .busy-progress-ring-track { stroke: rgba(0, 0, 0, 0.08); }
+[data-theme="light"] .mini-spinner { border-color: rgba(0, 0, 0, 0.12); }
+
+/* Scrollbars */
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.25); }

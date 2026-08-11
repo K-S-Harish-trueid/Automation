@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Ring Test — isolated</title>
+<link rel="stylesheet" href="style.css?v=20260811-07" />
+<style>
+  body { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 24px; }
+  .test-panel { display: flex; flex-wrap: wrap; gap: 8px; max-width: 480px; justify-content: center; }
+  .test-panel button { padding: 8px 14px; cursor: pointer; }
+  #log {
+    width: 480px; max-width: 90vw; height: 180px; overflow-y: auto;
+    background: rgba(0,0,0,0.3); border: 1px solid var(--border, #333);
+    border-radius: 8px; padding: 10px; font: 12px/1.5 monospace; text-align: left;
+  }
+  #log .ok { color: #4f9fff; }
+  #log .bad { color: #ff5c5c; font-weight: bold; }
+  #counter { font: 14px/1.4 monospace; }
+  #counter b { color: #ff5c5c; }
+</style>
+</head>
+<body>
+
+<h2 style="margin:0">Ring isolation test</h2>
+<p style="max-width:480px; text-align:center; opacity:0.75; margin:0">
+  This is the exact markup/CSS from the busy overlay, driven by hand instead of a real job.
+  It watches its own rotation every frame and flags any backward snap automatically —
+  no need to eyeball it for 15 minutes.
+</p>
+
+<!-- exact markup copied from index.html's #busyOverlay -->
+<div class="busy-card" style="position: static;">
+  <div class="busy-kicker">Pipeline in progress</div>
+  <div class="busy-progress-ring-wrap">
+    <svg class="busy-progress-ring" width="108" height="108" viewBox="0 0 120 120">
+      <circle class="busy-progress-ring-track" cx="60" cy="60" r="50" />
+      <circle class="busy-progress-ring-fill indeterminate" id="progressRingFill" cx="60" cy="60" r="50" />
+    </svg>
+    <div class="busy-progress-ring-label">
+      <div id="busyPercent" class="busy-percent mono"></div>
+    </div>
+  </div>
+  <div id="busyText" class="busy-text">Processing…</div>
+</div>
+
+<div class="test-panel">
+  <button id="btnIndeterminate">Indeterminate (spin)</button>
+  <button data-pct="0">0%</button>
+  <button data-pct="25">25%</button>
+  <button data-pct="50">50%</button>
+  <button data-pct="75">75%</button>
+  <button data-pct="100">100%</button>
+  <button id="btnStallSim">Simulate real stage (stall → auto spin)</button>
+  <button id="btnClearLog">Clear log</button>
+</div>
+
+<div id="counter">Watching rotation for backward jumps… resets detected: <b id="resetCount">0</b></div>
+<div id="log"></div>
+
+<script>
+// ---- same two functions as app.js, copied verbatim so this test exercises
+// the real transition logic, not a re-implementation of it ----
+const RING_CIRCUMFERENCE = 314.159;
+const progressRingFillEl = document.getElementById("progressRingFill");
+const busyPercentEl = document.getElementById("busyPercent");
+const busyTextEl = document.getElementById("busyText");
+
+function setRingIndeterminate() {
+  progressRingFillEl.classList.add("indeterminate");
+  busyPercentEl.textContent = "";
+}
+function setRingProgress(pct) {
+  progressRingFillEl.classList.remove("indeterminate");
+  const clamped = Math.max(0, Math.min(100, pct));
+  progressRingFillEl.style.strokeDashoffset = String(RING_CIRCUMFERENCE * (1 - clamped / 100));
+  busyPercentEl.textContent = `${Math.round(clamped)}%`;
+}
+
+// ---- manual controls ----
+document.getElementById("btnIndeterminate").onclick = () => { setRingIndeterminate(); log("→ indeterminate", "ok"); };
+document.querySelectorAll("[data-pct]").forEach((btn) => {
+  btn.onclick = () => { const p = Number(btn.dataset.pct); setRingProgress(p); log(`→ determinate ${p}%`, "ok"); };
+});
+
+// ---- simulate the real pollProgressUntilIdle() behavior: a percent that
+// updates once, then stalls (mirrors the backend calling set_progress once
+// before handing off to a long background merge) ----
+let stallTimer = null;
+document.getElementById("btnStallSim").onclick = () => {
+  if (stallTimer) clearInterval(stallTimer);
+  let unchangedPolls = 0;
+  const STALL_POLLS_BEFORE_INDETERMINATE = 3;
+  setRingProgress(40);
+  log("→ simulated stage report: 40%, then stalls (like the real backend)", "ok");
+  let tick = 0;
+  stallTimer = setInterval(() => {
+    tick++;
+    unchangedPolls++;
+    if (unchangedPolls >= STALL_POLLS_BEFORE_INDETERMINATE) {
+      setRingIndeterminate();
+      if (unchangedPolls === STALL_POLLS_BEFORE_INDETERMINATE) log(`→ poll ${tick}: percent still 40% after ${STALL_POLLS_BEFORE_INDETERMINATE} polls, switching to indeterminate — watch it for a while`, "ok");
+    }
+  }, 900);
+};
+
+document.getElementById("btnClearLog").onclick = () => { document.getElementById("log").innerHTML = ""; document.getElementById("resetCount").textContent = "0"; };
+
+function log(msg, cls) {
+  const el = document.getElementById("log");
+  const line = document.createElement("div");
+  line.className = cls || "";
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ---- automatic backward-jump detector ----
+// Reads the live computed rotation angle every animation frame. A proper
+// continuous 0deg->360deg loop only ever goes forward, wrapping 359->0
+// (which is not a jump, since 0 and 360 are the same angle). Any other
+// backward move means the animation snapped -- exactly the bug being tested.
+let prevAngle = null;
+let resetCount = 0;
+function angleOf(el) {
+  const t = getComputedStyle(el).transform;
+  if (t === "none") return 0;
+  const m = t.match(/matrix\(([^)]+)\)/);
+  if (!m) return 0;
+  const [a, b] = m[1].split(",").map(Number);
+  let deg = Math.atan2(b, a) * (180 / Math.PI);
+  if (deg < 0) deg += 360;
+  return deg;
+}
+function watch() {
+  if (progressRingFillEl.classList.contains("indeterminate")) {
+    const angle = angleOf(progressRingFillEl);
+    if (prevAngle !== null) {
+      const delta = angle - prevAngle;
+      // wraparound (359 -> 0-ish) is fine; a real bug jumps backward by a
+      // large amount without being near the 360 boundary.
+      if (delta < -5 && prevAngle < 340) {
+        resetCount++;
+        document.getElementById("resetCount").textContent = String(resetCount);
+        log(`✗ RESET DETECTED: jumped ${prevAngle.toFixed(1)}deg → ${angle.toFixed(1)}deg`, "bad");
+      }
+    }
+    prevAngle = angle;
+  } else {
+    prevAngle = null;
+  }
+  requestAnimationFrame(watch);
+}
+requestAnimationFrame(watch);
+
+// start in indeterminate so you see the spin immediately
+setRingIndeterminate();
+log("Ready. Click a button, or just watch the spin — reset counter above is live.", "ok");
+</script>
+</body>
+</html>

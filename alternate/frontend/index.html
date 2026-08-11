@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>K2 Automation</title>
-<link rel="stylesheet" href="style.css?v=20260811-10" />
+<link rel="stylesheet" href="style.css?v=20260805-06" />
 </head>
 <body>
 <div class="layout">
@@ -28,18 +28,19 @@
 
     <div class="sidebar-label" id="stageListLabel">Pipeline stages</div>
     <ul class="stage-list" id="stageList"></ul>
+    <div class="sidebar-footer">
+      <span class="status-dot" aria-hidden="true"></span>Local workspace
+      <button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode"></button>
+    </div>
   </aside>
 
   <main class="main">
     <div class="main-inner">
       <div class="main-context">
-        <div class="job-context" id="jobContext">
-          <span class="job-context-pill job-context-id" id="jobContextId">Data preparation</span>
-        </div>
         <div class="main-context-actions">
           <button class="context-action" id="goToDashboardBtn" type="button" hidden>Dashboard</button>
           <button class="context-action context-rollback" id="rollbackJobBtn" type="button" hidden>Rollback</button>
-          <button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode"></button>
+          <span class="main-context-state" id="workspaceState">Ready</span>
         </div>
       </div>
       <section class="card" id="mainCard" aria-live="polite"></section>
@@ -66,6 +67,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20260811-08"></script>
+<script src="app.js?v=20260805-06"></script>
 </body>
 </html>

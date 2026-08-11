@@ -58,36 +58,15 @@ def balanced_assign(n_rows: int, options: list[str], seed: int = 42) -> list[str
 
 
 def parse_dob_series(values: pd.Series) -> pd.Series:
-    """Parse standard K2 timestamps exactly, then fall back for corrections.
-
-    Three passes, each only touching what the previous one left as NaT:
-    1. The exact raw-export shape ("%Y-%m-%d %H:%M:%S").
-    2. A bare ISO date ("%Y-%m-%d") -- year-month-day order is unambiguous
-       by construction, so this must NOT go through dayfirst inference.
-       Skipping this pass and falling straight to (3) used to send every
-       time-less ISO date (any hand-typed correction, e.g. "2008-08-11")
-       through a dayfirst=True "mixed format" guess, which silently swapped
-       month and day for any date where both are <=12 (~39% of all dates) --
-       e.g. "2008-08-11" (11 Aug) was silently becoming 8 Nov. Real raw K2
-       exports always carry a time suffix so pass 1 catches them and this
-       bug never showed up there, but any manually-typed correction from
-       Naresh/Haider without one was exposed to it.
-    3. Everything else (e.g. genuinely ambiguous DD/MM/YYYY-style slash
-       dates) -- dayfirst=True here is intentional and correct, this is the
-       one place month/day order actually needs to be inferred."""
+    """Parse standard K2 timestamps exactly, then fall back for corrections."""
     normalized = values.astype(str).str.strip()
     parsed = pd.to_datetime(
         normalized, errors="coerce", format="%Y-%m-%d %H:%M:%S"
     )
-    needs_iso_fallback = parsed.isna() & normalized.ne("")
-    if needs_iso_fallback.any():
-        parsed.loc[needs_iso_fallback] = pd.to_datetime(
-            normalized.loc[needs_iso_fallback], errors="coerce", format="%Y-%m-%d",
-        )
-    needs_mixed_fallback = parsed.isna() & normalized.ne("")
-    if needs_mixed_fallback.any():
-        parsed.loc[needs_mixed_fallback] = pd.to_datetime(
-            normalized.loc[needs_mixed_fallback],
+    needs_fallback = parsed.isna() & normalized.ne("")
+    if needs_fallback.any():
+        parsed.loc[needs_fallback] = pd.to_datetime(
+            normalized.loc[needs_fallback],
             errors="coerce",
             dayfirst=True,
             format="mixed",

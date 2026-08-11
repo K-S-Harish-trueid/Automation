@@ -16,15 +16,6 @@ from .stages.reset_cms import stage_reset_cms_fields
 
 RAW_REQUIRED_COLS = list(dict.fromkeys(["ACCOUNT_NUMBER", *REPLACE_MAPPING_COLS, *CMS_UPDATE_COLS]))
 
-# Stage ids to hide from the sidebar/progress meter (helpers.py's
-# _public_job_status flags each stage entry with "hidden": True/False for
-# the frontend to filter on) while still running them exactly as normal --
-# this is purely a display toggle, not a pipeline change. Add/remove ids
-# here to show or hide a stage; empty set shows everything.
-# address_fix is hidden pending a decision on relocating/reworking it --
-# see TODO.
-HIDDEN_STAGE_IDS: set[str] = {"address_fix"}
-
 
 def validate_upload_inputs(stage_id: str, df, ref_df):
     if stage_id == "replace":
@@ -32,8 +23,8 @@ def validate_upload_inputs(stage_id: str, df, ref_df):
 
 
 STAGES = [
-    {"id": "clean", "title": "Initial Data Cleaning", "type": "auto", "stage": 1},
-    {"id": "replace", "title": "Historical Override", "type": "upload", "sql_source": True, "stage": 1,
+    {"id": "clean", "title": "Initial Data Cleaning", "type": "auto", "flow": 1},
+    {"id": "replace", "title": "Historical Override", "type": "upload", "skippable": True, "flow": 1,
      "upload_label": "Historical override file (matches on ACCOUNT_NUMBER, e.g. K2_DATA_PAH_....xlsx)",
      "upload_guidance": {
          "expected_file": "Historical replacement export",
@@ -43,20 +34,16 @@ STAGES = [
          "duplicate_handling": "The last row for each duplicated ACCOUNT_NUMBER is used.",
          "unresolved_label": "Accounts not found in this file keep their current values.",
      }},
-    {"id": "reset_cms", "title": "Inputs required from CMS", "type": "auto", "stage": 1},
-    {"id": "id_dob_validate", "title": "Missing ID & DoB", "type": "manual_edit", "stage": 1},
-    {"id": "address_fix", "title": "Address Auto-Fix", "type": "auto", "stage": 1},
-    {"id": "mobile_fill", "title": "Missing Mobile Numbers", "type": "manual_edit", "stage": 1},
-    {"id": "stage1_dispatch", "title": "Stage 1 Dispatch", "type": "stage1", "stage": 1},
-    # Name issues are never in Haider's Stage 1 file -- they're deferred and
-    # only ever handed to him bundled into the Stage 2 dispatch file, but
-    # this is still its own blocking review gate between the two dispatches
-    # (not just a data classification used when building that file).
-    {"id": "name_validate", "title": "Name Validation", "type": "manual_edit", "stage": 2},
-    {"id": "stage2_dispatch", "title": "Stage 2 Dispatch", "type": "stage2", "stage": 2},
-    {"id": "final_id_check", "title": "Final ID Validation", "type": "manual_edit", "stage": 3},
-    {"id": "default_id", "title": "Default ID Assignment", "type": "confirm", "stage": 3},
-    {"id": "done", "title": "Final Output", "type": "done", "stage": 3},
+    {"id": "reset_cms", "title": "Inputs from CMS", "type": "auto", "flow": 1},
+    {"id": "id_dob_validate", "title": "Missing ID & DoB", "type": "manual_edit", "flow": 1},
+    {"id": "address_fix", "title": "Address Auto-Fix", "type": "auto", "flow": 1},
+    {"id": "mobile_fill", "title": "Missing Mobile Numbers", "type": "manual_edit", "flow": 1},
+    {"id": "flow1_dispatch", "title": "Stage 1 Dispatch", "type": "flow1", "flow": 1},
+    {"id": "name_validate", "title": "Name Validation", "type": "manual_edit", "flow": 2},
+    {"id": "flow2_dispatch", "title": "Stage 2 Dispatch", "type": "flow2", "flow": 2},
+    {"id": "final_id_check", "title": "Final ID Validation", "type": "manual_edit", "flow": 3},
+    {"id": "default_id", "title": "Default ID Assignment", "type": "confirm", "flow": 3},
+    {"id": "done", "title": "Final Output", "type": "done", "flow": 3},
 ]
 
 AUTO_HANDLERS = {

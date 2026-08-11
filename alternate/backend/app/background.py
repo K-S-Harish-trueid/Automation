@@ -2,7 +2,6 @@ import threading
 
 from . import pipeline, store
 from .helpers import _append_audit_events, _current_stage
-from .pipeline.registry import HIDDEN_STAGE_IDS
 
 # Toggle: while True, manual_edit stages are auto-advanced by the background
 # runner itself (like an auto stage) instead of stopping and waiting for an
@@ -26,17 +25,11 @@ def _advance_with_progress(job_id: str):
         stage = stages[idx]
 
         if stage["type"] == "auto":
-            # Hidden stages (registry.py's HIDDEN_STAGE_IDS) don't get their
-            # name shown on the busy overlay either -- leaves whatever the
-            # last visible step's label was on screen instead of flashing a
-            # stage that isn't in the sidebar. The percent still advances
-            # (below, after the handler runs) so progress doesn't stall.
-            if stage["id"] not in HIDDEN_STAGE_IDS:
-                store.set_progress(
-                    job_id, status="processing", current_step_index=idx + 1,
-                    total_steps=total, current_step_name=stage["title"],
-                    percent=round(idx / total * 100),
-                )
+            store.set_progress(
+                job_id, status="processing", current_step_index=idx + 1,
+                total_steps=total, current_step_name=stage["title"],
+                percent=round(idx / total * 100),
+            )
             handler = pipeline.AUTO_HANDLERS[stage["id"]]
             before = df.copy(deep=True)
             df, summary = handler(df)

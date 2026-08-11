@@ -8,7 +8,7 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from .. import historical_db, pipeline, store
+from .. import pipeline, store
 from ..background import _run_in_background
 from ..helpers import (
     VALIDATION_NOTES,
@@ -42,15 +42,12 @@ def current_stage_detail(job_id: str, page: int = 1):
     stage = _current_stage(status)
 
     if stage is None or stage["type"] == "done":
-        # One read of the audit log, reused for the quality summary's tallies
-        # and the preview/count below, instead of three separate reads.
-        audit = store.read_audit_events(job_id)
         return {
             "type": "done",
             "row_count": len(df),
-            "quality_summary": _quality_summary(df, status, audit),
-            "audit_event_count": len(audit),
-            "audit_preview": audit[-30:],
+            "quality_summary": _quality_summary(df, status),
+            "audit_event_count": len(status.get("audit", [])),
+            "audit_preview": status.get("audit", [])[-30:],
         }
 
     if stage["type"] == "upload":
@@ -60,24 +57,23 @@ def current_stage_detail(job_id: str, page: int = 1):
             "title": stage["title"],
             "label": stage["upload_label"],
             "guidance": stage.get("upload_guidance", {}),
-            "sql_available": bool(stage.get("sql_source")) and historical_db.has_data(),
+            "skippable": bool(stage.get("skippable")),
             "api_invoke_planned": bool(stage.get("api_invoke_planned")),
         }
 
-    if stage["type"] in ("stage1", "stage2"):
+    if stage["type"] in ("flow1", "flow2"):
         payload = {
             "type": stage["type"],
             "stage_id": stage["id"],
             "title": stage["title"],
             "row_count": len(df),
         }
-        if stage["type"] == "stage2":
-            # Lets the wait screen (and Stage 3) tell the operator whether
+        if stage["type"] == "flow2":
+            # Lets the wait screen (and Flow 3) tell the operator whether
             # there's anything left for Haider's second-pass file to fix --
-            # if both are 0, Stage 3 doesn't need that file for this job at all.
+            # if both are 0, Flow 3 doesn't need that file for this job at all.
             payload["invalid_id_count"] = int(pipeline.mask_id_only_invalid(df).sum())
             payload["invalid_dob_count"] = int(pipeline.mask_dob_invalid(df).sum())
-            payload["invalid_name_count"] = int(pipeline.mask_name_invalid(df).sum())
         return payload
 
     if stage["type"] == "confirm":
@@ -104,7 +100,7 @@ def current_stage_detail(job_id: str, page: int = 1):
         reasons = cfg["reasons"](df)
         visible_fields = set(cfg["context_cols"] + cfg["editable_cols"])
         labels_by_row: dict[int, list[str]] = {}
-        for event in store.read_audit_events(job_id):
+        for event in status.get("audit", []):
             row_key = event.get("row_key")
             if row_key in page_df.index and event.get("field") in visible_fields and event.get("label"):
                 labels_by_row.setdefault(row_key, []).append(event["label"])
@@ -194,20 +190,15 @@ async def upload_reference(job_id: str, file: UploadFile = File(...)):
     return {"job_id": job_id, "status": "processing"}
 
 
-@router.post("/api/jobs/{job_id}/use-historical-sql")
-def use_historical_sql(job_id: str):
-    """For any stage marked `sql_source: True` in the registry (currently
-    just the historical-override upload stage): apply the cached SQLite copy
-    of the reference data instead of requiring a fresh xlsx upload every job.
-    Replaces the old no-op "skip" -- this still changes the data (same
-    ACCOUNT_NUMBER match as a real upload), it just sources it from the
-    historical_db cache instead of a file the operator has to provide."""
+@router.post("/api/jobs/{job_id}/skip")
+def skip_stage(job_id: str):
+    """Generic skip for any stage marked `skippable: True` in the registry
+    (currently just the historical-override upload stage) -- advances the
+    stage with no data change."""
     status = _require_job(job_id)
     stage = _current_stage(status)
-    if stage is None or not stage.get("sql_source"):
-        raise HTTPException(400, "current stage has no SQL source")
-    if not historical_db.has_data():
-        raise HTTPException(400, "Historical SQL store has not been seeded yet")
+    if stage is None or not stage.get("skippable"):
+        raise HTTPException(400, "current stage cannot be skipped")
 
     if not store.try_begin_processing(job_id):
         raise HTTPException(409, "Job is already processing")
@@ -225,25 +216,15 @@ def use_historical_sql(job_id: str):
     )
 
     def resolve_gate():
-        df = store.get_df(job_id)
-        before = df.copy(deep=True)
         st = store.get_status(job_id)
         cur = _current_stage(st)
-        ref_df = historical_db.load_reference_df(df["ACCOUNT_NUMBER"])
-        handler = pipeline.UPLOAD_HANDLERS[cur["id"]]
-        df, summary = handler(df, ref_df=ref_df)
-        metrics = _upload_metrics(before, ref_df)
-        _append_audit_events(
-            st, before, df, stage_id=cur["id"], label="Source-file updated",
-            reason="Matched value supplied by the cached historical SQL store.",
-            source_file="Historical SQL store", operator="System",
-        )
         cur["status"] = "done"
         st["history"].append({
-            "stage_id": cur["id"], "title": cur["title"], "summary": summary, "metrics": metrics,
+            "stage_id": cur["id"], "title": cur["title"],
+            "summary": f"\"{cur['title']}\" skipped by operator.",
+            "metrics": {"skipped": True},
         })
         st["stage_index"] += 1
-        store.set_df(job_id, df)
 
     _run_in_background(job_id, resolve_gate)
     return {"job_id": job_id, "status": "processing"}
