@@ -42,13 +42,18 @@ def _advance_with_progress(job_id: str):
             df, summary = handler(df)
             auto_labels = {
                 "clean": ("System corrected", "Line breaks were removed during initial cleaning."),
+                "replace": ("Source-file updated", "Matched value supplied by the cached historical SQL store."),
                 "reset_cms": ("System reset", "CMS fields were cleared before CMS integration."),
                 "address_fix": ("System corrected", "Invalid address auto-filled from the province/Baghdad pool."),
             }
             label, reason = auto_labels.get(stage["id"], ("System corrected", "Automated pipeline update."))
+            # "replace" pulls from the historical SQL cache, not the job's own
+            # source file -- the audit trail should say so, not attribute the
+            # value to whatever the operator originally uploaded.
+            source_file = "Historical SQL store" if stage["id"] == "replace" else status.get("filename", "Source file")
             _append_audit_events(
                 status, before, df, stage_id=stage["id"], label=label, reason=reason,
-                source_file=status.get("filename", "Source file"), operator="System",
+                source_file=source_file, operator="System",
             )
             stage["status"] = "done"
             status["history"].append({"stage_id": stage["id"], "title": stage["title"], "summary": summary})

@@ -60,7 +60,6 @@ def current_stage_detail(job_id: str, page: int = 1):
             "title": stage["title"],
             "label": stage["upload_label"],
             "guidance": stage.get("upload_guidance", {}),
-            "sql_available": bool(stage.get("sql_source")) and historical_db.has_data(),
             "api_invoke_planned": bool(stage.get("api_invoke_planned")),
         }
 
@@ -194,59 +193,25 @@ async def upload_reference(job_id: str, file: UploadFile = File(...)):
     return {"job_id": job_id, "status": "processing"}
 
 
-@router.post("/api/jobs/{job_id}/use-historical-sql")
-def use_historical_sql(job_id: str):
-    """For any stage marked `sql_source: True` in the registry (currently
-    just the historical-override upload stage): apply the cached SQLite copy
-    of the reference data instead of requiring a fresh xlsx upload every job.
-    Replaces the old no-op "skip" -- this still changes the data (same
-    ACCOUNT_NUMBER match as a real upload), it just sources it from the
-    historical_db cache instead of a file the operator has to provide."""
+@router.post("/api/jobs/{job_id}/update-historical")
+def update_historical(job_id: str):
+    """Insert-or-replace this completed job's accounts into the historical
+    SQL store (historical_db.py) -- keyed on ACCOUNT_NUMBER via
+    INSERT OR REPLACE, so calling this again later (even on the same job)
+    never duplicates rows, it just refreshes them. Only available once the
+    job is finished. Fast enough (SQLite bulk insert, no xlsx parse) to run
+    synchronously in the request instead of needing progress tracking."""
     status = _require_job(job_id)
     stage = _current_stage(status)
-    if stage is None or not stage.get("sql_source"):
-        raise HTTPException(400, "current stage has no SQL source")
-    if not historical_db.has_data():
-        raise HTTPException(400, "Historical SQL store has not been seeded yet")
+    if stage is not None and stage["type"] != "done":
+        raise HTTPException(400, "Job must be complete before updating the historical store")
 
-    if not store.try_begin_processing(job_id):
-        raise HTTPException(409, "Job is already processing")
+    df = store.get_df(job_id)
     try:
-        store.create_checkpoint(job_id, f"Before {stage['title']}", stage["id"])
-    except OSError as e:
-        store.end_processing(job_id)
-        raise HTTPException(500, f"The backend could not write a rollback checkpoint: {e}") from e
-
-    total = len(status["stages"])
-    store.set_progress(
-        job_id, status="processing", current_step_index=status["stage_index"] + 1,
-        total_steps=total, current_step_name=stage["title"],
-        percent=round(status["stage_index"] / total * 100),
-    )
-
-    def resolve_gate():
-        df = store.get_df(job_id)
-        before = df.copy(deep=True)
-        st = store.get_status(job_id)
-        cur = _current_stage(st)
-        ref_df = historical_db.load_reference_df(df["ACCOUNT_NUMBER"])
-        handler = pipeline.UPLOAD_HANDLERS[cur["id"]]
-        df, summary = handler(df, ref_df=ref_df)
-        metrics = _upload_metrics(before, ref_df)
-        _append_audit_events(
-            st, before, df, stage_id=cur["id"], label="Source-file updated",
-            reason="Matched value supplied by the cached historical SQL store.",
-            source_file="Historical SQL store", operator="System",
-        )
-        cur["status"] = "done"
-        st["history"].append({
-            "stage_id": cur["id"], "title": cur["title"], "summary": summary, "metrics": metrics,
-        })
-        st["stage_index"] += 1
-        store.set_df(job_id, df)
-
-    _run_in_background(job_id, resolve_gate)
-    return {"job_id": job_id, "status": "processing"}
+        updated = historical_db.upsert_rows(df)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"updated_rows": updated}
 
 
 @router.post("/api/jobs/{job_id}/draft")

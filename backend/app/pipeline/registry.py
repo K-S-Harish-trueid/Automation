@@ -11,7 +11,7 @@ from .stages.final_id_check import mask_id_only_invalid, validation_reasons_id_o
 from .stages.id_dob_validate import mask_id_dob_invalid, validation_reasons_id_dob
 from .stages.mobile_fill import mask_mobile_missing, validation_reasons_mobile
 from .stages.name_validate import mask_name_invalid, validation_reasons_name
-from .stages.replace import REPLACE_MAPPING_COLS, stage_replace_reference, validate_replace_reference_inputs
+from .stages.replace import REPLACE_MAPPING_COLS, stage_replace_from_sql
 from .stages.reset_cms import stage_reset_cms_fields
 
 RAW_REQUIRED_COLS = list(dict.fromkeys(["ACCOUNT_NUMBER", *REPLACE_MAPPING_COLS, *CMS_UPDATE_COLS]))
@@ -26,23 +26,21 @@ RAW_REQUIRED_COLS = list(dict.fromkeys(["ACCOUNT_NUMBER", *REPLACE_MAPPING_COLS,
 HIDDEN_STAGE_IDS: set[str] = {"address_fix"}
 
 
+# No stage is type "upload" right now (replace moved to auto, see below) --
+# kept as a no-op rather than deleted so routes/stage.py's generic /upload
+# route still has something to call if a future stage needs a real file
+# upload gate again.
 def validate_upload_inputs(stage_id: str, df, ref_df):
-    if stage_id == "replace":
-        validate_replace_reference_inputs(df, ref_df)
+    pass
 
 
 STAGES = [
     {"id": "clean", "title": "Initial Data Cleaning", "type": "auto", "stage": 1},
-    {"id": "replace", "title": "Historical Override", "type": "upload", "sql_source": True, "stage": 1,
-     "upload_label": "Historical override file (matches on ACCOUNT_NUMBER, e.g. K2_DATA_PAH_....xlsx)",
-     "upload_guidance": {
-         "expected_file": "Historical replacement export",
-         "required_columns": ["ACCOUNT_NUMBER", *REPLACE_MAPPING_COLS],
-         "matching_key": "ACCOUNT_NUMBER",
-         "overwrite_fields": REPLACE_MAPPING_COLS,
-         "duplicate_handling": "The last row for each duplicated ACCOUNT_NUMBER is used.",
-         "unresolved_label": "Accounts not found in this file keep their current values.",
-     }},
+    # Was an "upload" gate (operator picks a file, or the old "Skip"/"Use
+    # from SQL" buttons); now fully automatic -- pulls straight from the
+    # SQLite historical cache (historical_db.py) every job, no pause, no
+    # button. See stage_replace_from_sql in stages/replace.py.
+    {"id": "replace", "title": "Historical Override", "type": "auto", "stage": 1},
     {"id": "reset_cms", "title": "Inputs required from CMS", "type": "auto", "stage": 1},
     {"id": "id_dob_validate", "title": "Missing ID & DoB", "type": "manual_edit", "stage": 1},
     {"id": "address_fix", "title": "Address Auto-Fix", "type": "auto", "stage": 1},
@@ -61,13 +59,15 @@ STAGES = [
 
 AUTO_HANDLERS = {
     "clean": stage_clean_linebreaks,
+    "replace": stage_replace_from_sql,
     "reset_cms": stage_reset_cms_fields,
     "address_fix": stage_address_fix,
 }
 
-UPLOAD_HANDLERS = {
-    "replace": stage_replace_reference,
-}
+# No stage is type "upload" right now -- kept (empty) as the wiring point for
+# routes/stage.py's generic /upload route, in case a future stage needs a
+# real file-upload gate again.
+UPLOAD_HANDLERS = {}
 
 CONFIRM_HANDLERS = {
     "default_id": stage_default_id_assign,

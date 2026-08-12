@@ -1270,7 +1270,6 @@ function renderUploadStage(current) {
     </div>
     <div class="row-actions">
       <button id="uploadBtn">${iconMarkup("upload")}<span>Upload and continue</span></button>
-      ${current.sql_available ? `<button class="secondary" id="useSqlBtn" type="button">Use from SQL</button>` : ""}
       ${current.api_invoke_planned ? `<button class="secondary" type="button" disabled title="Coming soon: pull this file automatically via API">Invoke via API (coming soon)</button>` : ""}
     </div>
   `);
@@ -1282,12 +1281,6 @@ function renderUploadStage(current) {
     fd.append("file", file);
     runAction(`/jobs/${jobId}/upload`, { method: "POST", body: fd }, `Merging ${expectedFile.toLowerCase()}…`);
   };
-  if (current.sql_available) {
-    document.getElementById("useSqlBtn").onclick = () => {
-      if (!window.confirm(`Apply "${current.title}" from the cached historical SQL store instead of uploading a file?`)) return;
-      runAction(`/jobs/${jobId}/use-historical-sql`, { method: "POST" }, "Applying from historical SQL store…");
-    };
-  }
 }
 
 function renderConfirmStage(current) {
@@ -1299,7 +1292,7 @@ function renderConfirmStage(current) {
       <div class="decision-info">
         <div class="decision-info-row">
           <span class="guidance-icon guidance-icon-art">${detailIconMarkup("identity", "guidance-detail-icon")}</span>
-          <p class="decision-copy">${escapeHtml(STAGE_DETAILS_VERBOSE ? current.summary : "This step will apply the pending changes and continue.")}</p>
+          <p class="decision-copy">${escapeHtml(current.summary)}</p>
         </div>
       </div>
       <div class="row-actions">
@@ -1393,7 +1386,7 @@ function renderDone(current) {
     <div class="row-actions">
       <button id="downloadBtn">Download final file</button>
       <button class="secondary" id="downloadAuditBtn">Download audit report (${(current.audit_event_count || 0).toLocaleString()})</button>
-      <button class="secondary quiet-action" id="newJobBtn">Start a new batch</button>
+      <button class="secondary quiet-action" id="updateHistoricalBtn" type="button">Update historical data</button>
     </div>
   `);
   document.getElementById("downloadBtn").onclick = () => {
@@ -1402,12 +1395,20 @@ function renderDone(current) {
   document.getElementById("downloadAuditBtn").onclick = () => {
     window.location.href = `${API}/jobs/${jobId}/audit/download`;
   };
-  document.getElementById("newJobBtn").onclick = () => {
-    localStorage.removeItem("k2_job_id");
-    jobId = null;
-    knownHistoryCount = null;
-    setViewScope(null);
-    refresh();
+  document.getElementById("updateHistoricalBtn").onclick = async () => {
+    if (isBusy) return;
+    if (!window.confirm("Add this job's accounts into the historical SQL store? Existing entries for matching accounts will be refreshed, not duplicated.")) return;
+    isBusy = true;
+    lockAllControls(true);
+    try {
+      const result = await api(`/jobs/${jobId}/update-historical`, { method: "POST" });
+      toast(`Historical store updated (${result.updated_rows.toLocaleString()} account(s))`);
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      isBusy = false;
+      lockAllControls(false);
+    }
   };
 }
 

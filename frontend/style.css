@@ -565,6 +565,12 @@ button.brand-mark:hover:not(:disabled) {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 24px rgba(0, 0, 0, 0.23);
 }
 
+.main-context-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .main-context-actions {
   display: flex;
   align-items: center;
@@ -1676,6 +1682,7 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
   .main { padding-top: 12px; }
   .main::after { display: none; }
   .main-context { flex-wrap: wrap; margin-bottom: 22px; }
+  .main-context-left { flex-wrap: wrap; }
   .main-context-actions { width: 100%; justify-content: flex-start; }
   .card { padding: 2px 4px 28px; }
   .sidebar { padding: 14px; }
@@ -1741,6 +1748,7 @@ td input:focus { outline: none; background: var(--accent-soft); border-color: va
   .stage-list li.rewind-target .dot { box-shadow: 0 0 0 3px var(--warn-soft); }
   .main { padding: 18px 14px 30px; }
   .main-context { align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+  .main-context-left { flex-wrap: wrap; gap: 6px; }
   .main-context-actions { flex-wrap: wrap; gap: 6px; }
   .context-action { min-height: 28px; padding: 4px 7px; font-size: 10px; }
   .card { min-height: 260px; padding: 22px 18px; }

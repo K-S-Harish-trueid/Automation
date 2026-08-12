@@ -1,29 +1,33 @@
 STEP 2 -- replace ("Historical Override")
 ================================================================================
-TYPE      upload (skippable)
-CODE      backend/app/pipeline/stages/replace.py :: stage_replace_reference,
-          validate_replace_reference_inputs, REPLACE_MAPPING_COLS
+TYPE      auto (fully automatic, no operator gate)
+CODE      backend/app/pipeline/stages/replace.py :: stage_replace_from_sql,
+          stage_replace_reference, validate_replace_reference_inputs,
+          REPLACE_MAPPING_COLS
+          backend/app/historical_db.py :: has_data, load_reference_df
 
 WHAT IT DOES
-Lets an operator upload a historical reference file whose values overwrite
-the current dataset for any account it matches on ACCOUNT_NUMBER.
+Runs automatically during the auto-stage chain (same as Initial Data
+Cleaning) -- overwrites the current dataset for any account matched on
+ACCOUNT_NUMBER, using values pulled straight from the historical SQL
+store (SQLite, backend/data/historical.db) instead of an uploaded file.
+No operator action, no pause.
 
-CONSTRAINTS -- upload is REJECTED if any of these fail
-  1. A reference file must be supplied.
-  2. Both the base dataset and the reference file must contain
-     ACCOUNT_NUMBER.
-  3. Both sides must contain every column in REPLACE_MAPPING_COLS (see
-     below) -- missing columns on either side reject the upload with an
-     explicit list of what's missing.
+CONSTRAINTS -- stage RAISES (fails the job with a visible error) if
+  1. The historical SQL store hasn't been seeded yet (historical_db.has_data()
+     is False). Fails loudly rather than silently shipping a job with no
+     override applied.
 
-MATCHING RULES (once validation above passes)
+MATCHING RULES
   1. Match key: ACCOUNT_NUMBER, compared as a whitespace-trimmed string on
      both sides -- not a numeric comparison.
-  2. If ACCOUNT_NUMBER repeats within the reference file, rows are sorted
-     by ACCOUNT_NUMBER and only the LAST occurrence of each duplicate is
-     kept.
-  3. Accounts present in the base dataset but absent from the reference
-     file are left completely unchanged.
+  2. If ACCOUNT_NUMBER repeats in the historical store, rows are sorted by
+     ACCOUNT_NUMBER and only the LAST occurrence of each duplicate is kept
+     (this is enforced when data is written into the store, via
+     seed_from_file/upsert_rows -- the store itself has a UNIQUE index on
+     ACCOUNT_NUMBER so it can never hold true duplicates).
+  3. Accounts present in the base dataset but absent from the historical
+     store are left completely unchanged.
 
 FIELDS OVERWRITTEN FOR MATCHED ACCOUNTS (REPLACE_MAPPING_COLS)
 ACCOUNT_LAST_NAME, ACCOUNT_FIRST_NAME, ACCOUNT_MIDDLE_NAME, DATE_OPENED,
@@ -35,7 +39,17 @@ CARD_STATUS, SECONDARY_CARD_TYPE.
 FIELD EXPLICITLY NEVER TOUCHED HERE
 CARD_NUMBER -- never overwritten by this step, even for matched accounts.
 
-SKIP RULE
-Skippable: POST /jobs/{id}/skip advances without uploading anything.
-Skipping performs no merge at all -- every account keeps its current
-values, identical to an account that simply had no match.
+KEEPING THE HISTORICAL STORE CURRENT
+- One-time/occasional full reseed from a fresh export:
+  historical_db.seed_from_file(path) -- replaces the whole table.
+- Ongoing growth: historical_db.upsert_rows(df), wired to the "Update
+  historical data" button on the Stage 3 done screen -- inserts or
+  replaces (by ACCOUNT_NUMBER) a completed job's own rows into the store,
+  so future jobs' Historical Override picks up what this job resolved.
+  Safe to call repeatedly, never duplicates.
+
+HISTORY
+Was previously an "upload" gate (operator supplied a file each job, or
+later a "Use from SQL" button); moved to fully automatic once the SQL
+store existed and reuploading a file every job stopped being necessary.
+See DONE for the full change log.
