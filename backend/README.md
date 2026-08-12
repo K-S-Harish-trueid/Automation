@@ -26,34 +26,61 @@ from the same process, so there's nothing else to start.
 
 Add `--reload` during development to auto-restart on code changes.
 
-### Expose it over the internet with ngrok
-
-From the project root (not this `backend/` folder), `run.py` wraps the same
-uvicorn app and adds an `NGROK` env var:
+From the project root instead of `backend/`, `run.py` wraps the same uvicorn
+app with a couple of extra conveniences (`--debug` for verbose logging +
+auto-reload + in-browser tracebacks):
 
 ```
-NGROK=true python run.py
+python run.py [--port 8000] [--host 127.0.0.1] [--reload] [--debug]
 ```
-
-Requires the `ngrok` CLI installed and already authenticated
-(`ngrok config check`). The public HTTPS URL prints to the console at
-startup; while the server is running it's also always available at
-**http://127.0.0.1:4040** (ngrok's local web interface), so you don't need to
-scroll back to find it. See the security note under "Hosting the frontend
-and backend separately" below — this makes the no-auth backend reachable
-from the public internet, not just localhost.
 
 ### Try it with dummy data
 
 `../dummy_data/` has a small 20-row fixture built to hit every validation
-rule (bad names, bad IDs, bad DoBs, bad addresses, missing phones) plus the
-reference file needed at the `replace` upload gate. See
+rule (bad names, bad IDs, bad DoBs, bad addresses, missing phones). See
 `../dummy_data/README.md` for which account triggers what. Upload
-`dummy_raw.csv` at the start screen and `dummy_replace_reference.xlsx` at the
-"Historical Override" stage. `dummy_cms_export.csv` predates the Stage
-1/2/3 handoff below and is no longer consumed by an automatic stage — CMS
-mobile/card data now comes in through two direct CMS export files at Stage 3
-instead (see below).
+`dummy_raw.csv` at the start screen. The historical-override reference data
+(what used to be a separate `dummy_replace_reference.xlsx` upload) now comes
+from `historical.db` instead — see "Historical override data" below for how
+to seed it. `dummy_cms_export.csv` predates the Stage 1/2/3 handoff below and
+is no longer consumed by an automatic stage — CMS mobile/card data now comes
+in through two direct CMS export files at Stage 3 instead (see below).
+
+### Historical override data (`historical.db`)
+
+The `replace` stage (see the stage table below) matches each account against
+a historical reference table kept in SQLite at `data/historical.db`, not an
+uploaded file — parsing the ~130MB source xlsx on every job was too slow
+(see `app/historical_db.py`'s docstring), so it's imported once and queried
+from there instead. `data/` is gitignored (except the two scripts below), so
+a fresh clone starts with no `historical.db` at all.
+
+Seed or reseed it any of these ways, all producing an identical table:
+
+- **From the web UI** — the Dashboard's "Historical reference data" panel
+  (and the historical-override warning gate itself, if a job hits it with
+  the store empty) lets an operator upload an xlsx/csv straight through the
+  browser. Calls `POST /api/historical/seed`; `GET /api/historical/status`
+  reports whether it's seeded and how many rows.
+- **`python backend/data/seed_historical.py [--source path] [--output path]`**
+  — same import, run from a terminal. Defaults to this repo's
+  `dummy_data/Input Data/Stage 1/Historical_Dataset.xlsx` fixture and the
+  live `data/historical.db` path.
+- **`seed_historical.bat`** (project root, Windows) — double-click wrapper
+  around the script above, using this repo's own `venv`.
+- **`python backend/data/create_xlsx_2_db.py <source.xlsx>`** — a generic,
+  standalone xlsx→SQLite converter with no dependency on this app's schema
+  (arbitrary columns, table name `data` by default). Not what seeds the live
+  store unless you pass `--table historical --output data/historical.db`
+  yourself; prefer `seed_historical.py` for that.
+
+If a job reaches the `replace` stage while `historical.db` is empty or
+unseeded, the pipeline doesn't error out or silently skip it — it pauses
+into a gate (`GET /jobs/{id}/current` reports `type: "historical_warning"`)
+showing the operator a warning, an inline "seed now" option, and a Continue
+button. `POST /jobs/{id}/continue-historical` resumes it (taking a rollback
+checkpoint first, same as any other gate) — if the store got seeded while
+paused, the real override applies on resume instead of being skipped.
 
 ### Hosting the frontend and backend separately
 
@@ -99,17 +126,27 @@ backend/
                     each action endpoint returns
     store.py        Per-job state: in-memory dict + a disk snapshot (parquet
                     + status.json) under jobs/<job_id>/, survives a restart
+    historical_db.py  SQLite cache backing the `replace` stage (see
+                    "Historical override data" above) -- has_data(),
+                    load_reference_df(), seed_from_file/seed_from_bytes,
+                    stats(), upsert_rows()
     helpers.py       Cross-cutting glue: audit-event recording, quality
                     summary, xlsx export writers
     pipeline/       Stage logic ported from clean.py / replace.py / cmsdata.py /
                     idvalid.py / dobvalid.py / pah3.py / mobileupd.py, one file
                     per pipeline stage -- see below
+    routes/historical.py  Web-based (re)seeding of historical.db -- GET
+                    /api/historical/status, POST /api/historical/seed
     routes/handoff.py  The Stage 1/2/3 reviewer handoff: dispatch/download
                     the Stage 1 and Stage 2 xlsx files, and ingest Naresh's/
                     Haider's responses. Kept out of stage.py since its
                     upload/merge shape (three files at once for Stage 3,
                     blank-means-no-change merges) differs from the generic
                     upload-stage gate.
+  data/             historical.db + the two scripts that build it
+                    (seed_historical.py, create_xlsx_2_db.py) -- gitignored
+                    except those two scripts, see "Historical override data"
+                    above
   jobs/             Runtime data, one folder per job (gitignored, safe to delete when idle)
   requirements.txt
 ```
@@ -153,12 +190,15 @@ pipeline/
 
 Each stage is one of `auto`, `upload`, `manual_edit`, `stage1`, `stage2`,
 `confirm`, or `done`; the server auto-runs `auto` stages back to back and
-stops on the others until the frontend (or an API call) resolves them.
+stops on the others until the frontend (or an API call) resolves them. (No
+stage is actually type `upload` right now — the mechanism is still there,
+`UPLOAD_HANDLERS` in `registry.py`, for if a future stage needs a real
+file-upload gate again.)
 
 | # | Stage id | Type | What happens |
 |---|---|---|---|
 | 1 | `clean` | auto | Strips line breaks from every field |
-| 2 | `replace` | upload | Upload a historical override file; merges on `ACCOUNT_NUMBER`, all fields except `CARD_NUMBER`. Skippable — `POST /jobs/{id}/skip` advances without a file, leaving accounts at their current values |
+| 2 | `replace` | auto | Matches every account against `data/historical.db` (see "Historical override data" above) on `ACCOUNT_NUMBER`, overwriting all fields except `CARD_NUMBER`. If the store is empty/unseeded, pauses into a `historical_warning` gate instead of silently skipping it — see above |
 | 3 | `reset_cms` | auto | Blanks `ACCOUNT_TYPE`/`CARD_TYPE`/`CARD_PROGRAM`/`CARD_STATUS`/`DATE_OPENED` |
 | 4 | `id_dob_validate` | manual_edit | Flags invalid `ID_TYPE`/`ID_NUMBER`/DoB for inline correction |
 | 5 | `address_fix` | auto | Auto-fills accounts with a missing address, an address with no letters at all (e.g. a phone number or placeholder), or an exact match against a known-junk denylist (e.g. "JUNE", a single letter) — replacement pulled from a Baghdad/province address pool, ported from the legacy `pah3.py` script. Rows whose province has no pool entry are left invalid, with no later step re-checking them — see `rules/06-address_fix.txt` |
@@ -199,13 +239,21 @@ a background thread. Poll `/progress` until it stops reporting
 
 | Method & path | Purpose |
 |---|---|
+| `POST /uploads/raw-preview` | multipart `file` — preview a raw CSV/XLSX before committing to it: `{filename, file_size, row_count, column_count, columns, missing_required_columns, ...}`. Creates nothing |
 | `POST /jobs` | multipart `file` — create a job from the raw CSV/XLSX, kicks off processing in the background |
-| `GET /jobs/{id}` | Full status: stage list + statuses + history |
+| `GET /jobs` | List job summaries (id, filename, current stage, row count, status); `?stage_id=<id>` filters to jobs currently parked at that stage — see below |
+| `GET /jobs/{id}` | Full status: stage list + statuses + history + `rollback_available`/`rollback_targets` (see "Rollback" below) |
 | `GET /jobs/{id}/progress` | `{status, current_step_index, total_steps, current_step_name, percent}` while processing; `status` is `"idle"`/`"done"`/`"error"` (with a `message`) once settled |
 | `GET /jobs/{id}/current` | Detail for whatever stage is currently active (shape depends on stage type) |
-| `POST /jobs/{id}/upload` | multipart `file` — resolve an `upload` stage in the background |
-| `POST /jobs/{id}/skip` | Skip the current stage without doing its normal action (only stages marked `skippable`: currently just `replace`) |
+| `GET /jobs/{id}/raw-upload` | Download the exact bytes originally uploaded for this job, untouched by any stage |
+| `POST /jobs/{id}/upload` | multipart `file` — resolve an `upload` stage in the background (no stage currently uses this) |
+| `POST /jobs/{id}/continue-historical` | Resume a job paused at the `replace` stage's `historical_warning` gate (empty/unseeded `historical.db`) — takes a rollback checkpoint, then resumes the auto-stage chain |
+| `POST /jobs/{id}/update-historical` | Insert-or-replace this **completed** job's own accounts into `historical.db` (keyed on `ACCOUNT_NUMBER`, never duplicates) — only available once the job reaches `done` |
+| `POST /jobs/{id}/draft` | `{ edits: [{row_key, field, value}] }` — save in-progress edits for the current `manual_edit` stage without submitting them |
+| `DELETE /jobs/{id}/draft` | Clear the saved draft for the current `manual_edit` stage |
+| `GET /jobs/{id}/workbook` | Download an Excel workbook covering every `manual_edit` stage reached so far, for offline review/editing |
 | `POST /jobs/{id}/submit` | `{ edits: [{row_key, field, value}], force_advance }` — resolve a `manual_edit` stage in the background |
+| `POST /jobs/{id}/submit-workbook` | multipart `file` (+ `force_advance`) — same as `/submit`, but the edits come from a completed `/workbook` download instead of inline JSON |
 | `GET /jobs/{id}/stage1/haider.xlsx` | Download Haider's Stage 1 file (Mobile flagged rows + blank CMS sheet) while parked at `stage1_dispatch`; repeatable, no side effects |
 | `GET /jobs/{id}/stage1/naresh.xlsx` | Download Naresh's Stage 1 file (ID Corrections + DOB Corrections sheets, every currently invalid row of each) while parked at `stage1_dispatch`; repeatable, no side effects |
 | `POST /jobs/{id}/stage2/naresh-response` | multipart `file` (2 sheets: ID Corrections, DOB Corrections) — Stage 2's merge step: apply Naresh's returned ID and DOB corrections, advance from `stage1_dispatch` through the `name_validate` gate to `stage2_dispatch` |
@@ -213,7 +261,12 @@ a background thread. Poll `/progress` until it stops reporting
 | `POST /jobs/{id}/stage3/haider-response` | multipart `cms_mobile_file` (flat: `ACCOUNT_NUMBER`+`PHONE_NUMBER`) + `cms_card_file` (flat: `ACCOUNT_NUMBER`+`CMS_UPDATE_COLS`, `DATE_OPENED` as M/D/YYYY) + `haider_corrections_file` (3 sheets: Name/ID/DOB) — Stage 3's merge step: apply all three, advance past `stage2_dispatch` into `final_id_check`/`default_id` |
 | `POST /jobs/{id}/confirm` | Resolve a `confirm` stage in the background |
 | `GET /jobs/{id}/download` | Download the final dataset as `{job_id}_final.xlsx` once the job reaches `done` |
-| `GET /jobs/{id}/audit/download` | Download the audit trail as `{job_id}_audit.xlsx` |
+| `GET /jobs/{id}/audit` | JSON `{count, events}` — the last 250 audit events (field-level change log) |
+| `GET /jobs/{id}/audit/download` | Download the full audit trail as `{job_id}_audit.xlsx` |
+| `POST /jobs/{id}/rollback` | Roll back to the most recent checkpoint — see "Rollback" below |
+| `POST /jobs/{id}/rollback/{checkpoint_id}` | Roll back to a specific checkpoint (ids come from `GET /jobs/{id}`'s `rollback_targets`) |
+| `GET /api/historical/status` | `{seeded, row_count, seeded_at}` for `data/historical.db` |
+| `POST /api/historical/seed` | multipart `file` — (re)seed `historical.db` from an uploaded xlsx/csv, replacing the whole table |
 
 `GET /jobs?stage_id=<id>` filters the job list to jobs currently parked at
 that stage — used by the Stage 2/3 pages' job pickers (`stage_id` omitted
@@ -228,6 +281,18 @@ import — see `_write_flat_xlsx` in `app/helpers.py`.
 
 Calling an action endpoint again while a job is already processing gets a
 `409 Conflict` instead of starting a second run.
+
+### Rollback
+
+Every gate-resolving action (`/upload`, `/submit`, `/submit-workbook`,
+`/confirm`, `/continue-historical`) saves a full checkpoint (dataframe +
+status snapshot, under `jobs/<job_id>/checkpoints/`) before applying its
+change. `GET /jobs/{id}` reports the available ones as `rollback_targets`;
+`POST /jobs/{id}/rollback` restores the most recent, `POST
+/jobs/{id}/rollback/{checkpoint_id}` restores a specific one by id. Rolling
+all the way back to the very first `clean` stage isn't supported — that
+would mean re-running the whole pipeline anyway, so starting a new job is the
+better path for that case.
 
 ## Stage 1/2/3 reviewer handoff
 
@@ -314,9 +379,9 @@ one exception — that's hand-written prose, not derived from code, so it can
 drift if a rule changes and this doesn't get updated alongside it).
 
 Testable stages: `name_validate`, `id_dob_validate`, `address_fix`,
-`mobile_fill`, `final_id_check` (the ones with a per-row rule to try — auto
-whole-dataset stages like `clean`/`reset_cms` and the `replace` upload-merge
-stage aren't testable this way, there's nothing single-row about them).
+`mobile_fill`, `final_id_check` (the ones with a per-row rule to try — whole-
+dataset auto stages like `clean`/`reset_cms`/`replace` aren't testable this
+way, there's nothing single-row about them).
 
 Deliberately kept out of sight on purpose, not by accident:
 - Not linked anywhere in the main app UI.
