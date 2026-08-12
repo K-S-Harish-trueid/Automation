@@ -40,6 +40,28 @@ def _advance_with_progress(job_id: str):
             handler = pipeline.AUTO_HANDLERS[stage["id"]]
             before = df.copy(deep=True)
             df, summary = handler(df)
+
+            # The historical-override step (stage_replace_from_sql) returns
+            # an unchanged df + a warning summary instead of raising when
+            # historical.db is empty/unseeded -- rather than silently
+            # continuing (easy to miss in the stage history), pause the
+            # auto-chain here and surface it as a gate, same shape as an
+            # upload/confirm stage, so the operator explicitly chooses to go
+            # on. Checked directly against the real data (historical_db.has_
+            # data()), not by pattern-matching stage_replace_from_sql's
+            # display text -- that text is only ever shown to the operator,
+            # never used for control flow, so rewording it later can't
+            # silently break this pause. status["historical_ack"] is set by
+            # the /continue-historical route once they acknowledge it, so
+            # this only pauses once per job even though the handler re-runs
+            # (idempotently) on resume.
+            from .historical_db import has_data as _historical_has_data
+            if stage["id"] == "replace" and not _historical_has_data() and not status.get("historical_ack"):
+                status["pending_warning"] = {"stage_id": stage["id"], "title": stage["title"], "message": summary}
+                store.set_df(job_id, df)
+                store.persist(job_id)
+                break
+
             auto_labels = {
                 "clean": ("System corrected", "Line breaks were removed during initial cleaning."),
                 "replace": ("Source-file updated", "Matched value supplied by the cached historical SQL store."),

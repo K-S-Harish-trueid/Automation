@@ -16,6 +16,7 @@ re-adding an account updates it in place instead of duplicating -- that
 button isn't wired up yet, this function is just ready for it.
 """
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -32,9 +33,17 @@ COLUMNS = [KEY, *REPLACE_MAPPING_COLS]
 _QUERY_CHUNK = 500
 
 
-def _connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(DB_PATH)
+def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    # timeout=30: sqlite3's 5s default is shorter than a full reseed's write
+    # transaction can run (~800k-row bulk replace) -- without WAL, a job's
+    # read here would hit "database is locked" if it lands mid-reseed. WAL
+    # lets readers keep working off the pre-reseed snapshot instead of
+    # blocking on the writer at all; the timeout is just the safety margin
+    # for whatever WAL doesn't cover (e.g. two writers at once).
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
 
 
 def _clean_key(df: pd.DataFrame) -> pd.DataFrame:
@@ -43,21 +52,18 @@ def _clean_key(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def seed_from_file(path) -> int:
-    """One-time (or re-run-to-refresh) full import of a historical reference
-    file (xlsx/csv) into SQLite -- replaces the table entirely. Not called by
-    the running app; run manually when (re)seeding from a fresh export."""
-    from . import store  # local import: avoid a cycle, store imports little from here
-
-    path = Path(path)
-    df = store.read_table(path.read_bytes(), path.name)
+def _seed_from_df(df: pd.DataFrame, db_path: Path) -> int:
+    """Shared by seed_from_file and seed_from_bytes -- replaces the whole
+    historical table with an already-parsed DataFrame. One write path either
+    way, so a seed done from a file path and one done from raw bytes can
+    never disagree on validation/dedup/index behavior."""
     missing = [c for c in COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"Reference file missing columns: {missing}")
     df = _clean_key(df[COLUMNS])
     df = df.sort_values(by=[KEY]).drop_duplicates(subset=[KEY], keep="last")
 
-    conn = _connect()
+    conn = _connect(db_path)
     try:
         df.to_sql(TABLE, conn, if_exists="replace", index=False)
         conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{TABLE}_{KEY} ON {TABLE} ({KEY})")
@@ -65,6 +71,29 @@ def seed_from_file(path) -> int:
     finally:
         conn.close()
     return len(df)
+
+
+def seed_from_file(path, db_path: Path = DB_PATH) -> int:
+    """One-time (or re-run-to-refresh) full import of a historical reference
+    file (xlsx/csv) into SQLite -- replaces the table entirely. Not called by
+    the running app; run manually when (re)seeding from a fresh export.
+    db_path defaults to the app's own store (DB_PATH) but can be pointed
+    elsewhere (see data/seed_historical.py) without touching the live db."""
+    from . import store  # local import: avoid a cycle, store imports little from here
+
+    path = Path(path)
+    df = store.read_table(path.read_bytes(), path.name)
+    return _seed_from_df(df, Path(db_path))
+
+
+def seed_from_bytes(raw: bytes, filename: str, db_path: Path = DB_PATH) -> int:
+    """Same import as seed_from_file, for a caller that already has the raw
+    bytes in memory (routes/historical.py's web upload) -- skips writing
+    them to a temp file just to immediately read them back off disk."""
+    from . import store  # local import: avoid a cycle, store imports little from here
+
+    df = store.read_table(raw, filename)
+    return _seed_from_df(df, Path(db_path))
 
 
 def upsert_rows(df: pd.DataFrame) -> int:
@@ -105,6 +134,22 @@ def has_data() -> bool:
         return conn.execute(f"SELECT 1 FROM {TABLE} LIMIT 1").fetchone() is not None
     finally:
         conn.close()
+
+
+def stats() -> dict:
+    """Row count + when historical.db was last (re)seeded, for a status
+    display on the web UI (see routes/historical.py) -- so an operator can
+    see "seeded, 797,000 rows, updated 2026-08-12" or "not seeded" without
+    SSHing in and poking the file."""
+    if not has_data():
+        return {"seeded": False, "row_count": 0, "seeded_at": None}
+    conn = _connect()
+    try:
+        row_count = conn.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+    finally:
+        conn.close()
+    seeded_at = datetime.fromtimestamp(DB_PATH.stat().st_mtime).isoformat()
+    return {"seeded": True, "row_count": row_count, "seeded_at": seeded_at}
 
 
 def load_reference_df(account_numbers) -> pd.DataFrame:

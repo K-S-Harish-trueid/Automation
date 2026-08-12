@@ -783,6 +783,13 @@ function renderDashboard() {
         <p class="muted"><span class="mini-spinner"></span>Loading job history…</p>
       </div>
     </div>
+    <details class="audit-preview" id="historicalPanel">
+      <summary>${iconMarkup("database")}<span>Historical reference data</span></summary>
+      <div class="historical-panel-body">
+        <p class="muted" id="historicalStatusLine"><span class="mini-spinner"></span>Checking historical.db…</p>
+        ${historicalSeedPanelMarkup("historical")}
+      </div>
+    </details>
   `);
 
   document.getElementById("newBatchBtn").onclick = () => renderNewBatch();
@@ -790,8 +797,94 @@ function renderDashboard() {
   document.getElementById("stage3PageBtn").onclick = () => renderStage3Page();
   document.getElementById("jobSearchInput").oninput = () => renderJobHistoryTable();
   document.getElementById("jobStageFilter").onchange = () => renderJobHistoryTable();
+  wireHistoricalSeedPanel("historical", (status) => {
+    const line = document.getElementById("historicalStatusLine");
+    if (line) line.textContent = formatHistoricalStatus(status);
+  });
 
   loadJobHistory();
+  loadHistoricalStatus();
+}
+
+// Shared "seed historical data" block (file picker + Seed button) -- used by
+// both the Dashboard's "Historical reference data" panel and the
+// historical-override warning gate (renderHistoricalWarningStage), so the
+// two entry points to the same action can't drift out of sync with each
+// other. idPrefix keeps each call site's DOM ids distinct on the page.
+function historicalSeedPanelMarkup(idPrefix) {
+  return `
+    <div class="upload-simple-layout">
+      ${filePickerMarkup(`${idPrefix}FileInput`, `${idPrefix}FileZone`, `${idPrefix}FileName`, "Select xlsx/csv", "Replaces the entire historical store -- same as seed_historical.py", "database")}
+    </div>
+    <div class="row-actions">
+      <button class="secondary quiet-action" id="${idPrefix}SeedBtn" type="button">${iconMarkup("database")}<span>Seed historical data</span></button>
+    </div>
+  `;
+}
+
+function wireHistoricalSeedPanel(idPrefix, onSeeded) {
+  wireFilePicker(`${idPrefix}FileInput`, `${idPrefix}FileZone`, `${idPrefix}FileName`);
+  document.getElementById(`${idPrefix}SeedBtn`).onclick = async () => {
+    const file = document.getElementById(`${idPrefix}FileInput`).files[0];
+    const status = await seedHistoricalStore(file);
+    if (status) onSeeded(status);
+  };
+}
+
+function formatHistoricalStatus(status) {
+  if (!status || !status.seeded) {
+    return "Not seeded -- the historical override stage will run with a warning and no accounts updated until this is loaded.";
+  }
+  const rows = (status.row_count || 0).toLocaleString();
+  const updated = status.seeded_at ? new Date(status.seeded_at).toLocaleString() : "unknown time";
+  return `Seeded: ${rows} row(s), last updated ${updated}.`;
+}
+
+async function loadHistoricalStatus() {
+  const line = document.getElementById("historicalStatusLine");
+  if (!line) return;
+  try {
+    const status = await api("/historical/status");
+    if (document.getElementById("historicalStatusLine")) line.textContent = formatHistoricalStatus(status);
+  } catch (e) {
+    if (document.getElementById("historicalStatusLine")) line.textContent = "Status unavailable -- could not reach the backend.";
+  }
+}
+
+// Replaces the entire historical SQL store from a picked xlsx/csv -- the web
+// equivalent of running `python backend/data/seed_historical.py --source
+// <file>` (same code path, see routes/historical.py), so an operator never
+// has to touch the server's filesystem to (re)load reference data. Shared by
+// the Dashboard's "Historical reference data" panel and the historical
+// override warning gate (renderHistoricalWarningStage) -- same action, two
+// places to reach it from. Returns the new status on success, or null if the
+// operator cancelled or it failed (already toasted either way).
+async function seedHistoricalStore(file) {
+  if (isBusy) return null;
+  if (!file) { toast("Choose a file first", "error"); return null; }
+  if (!window.confirm(
+    `Replace the entire historical SQL store with ${file.name}? This overwrites all existing historical data, not a merge.`
+  )) return null;
+
+  const fd = new FormData();
+  fd.append("file", file);
+
+  isBusy = true;
+  lockAllControls(true);
+  setBusy("Seeding historical data…");
+  try {
+    const status = await api("/historical/seed", { method: "POST", body: fd });
+    clearBusy();
+    toast(`Historical store seeded (${(status.row_count || 0).toLocaleString()} row(s))`);
+    return status;
+  } catch (e) {
+    clearBusy();
+    toast(e.message, "error");
+    return null;
+  } finally {
+    isBusy = false;
+    lockAllControls(false);
+  }
 }
 
 // The data-init / "start a new batch" flow -- its own page, reached from the
@@ -1234,6 +1327,7 @@ async function previewRawUpload(file) {
 function renderStage(status, current) {
   if (current.type === "upload") return renderUploadStage(current);
   if (current.type === "stage1" || current.type === "stage2") return renderStageWaitScreen(current);
+  if (current.type === "historical_warning") return renderHistoricalWarningStage(current);
   if (current.type === "confirm") return renderConfirmStage(current);
   if (current.type === "manual_edit") return renderManualEditStage(current);
   pendingEdits = {};
@@ -1281,6 +1375,51 @@ function renderUploadStage(current) {
     fd.append("file", file);
     runAction(`/jobs/${jobId}/upload`, { method: "POST", body: fd }, `Merging ${expectedFile.toLowerCase()}…`);
   };
+}
+
+function renderHistoricalWarningStage(current) {
+  // Seeding here re-runs the SAME /continue-historical resume path as
+  // continuing without data -- background.py re-executes the "replace"
+  // stage's handler on resume regardless, so if historical.db now has data
+  // by the time Continue is clicked, the real override applies instead of
+  // being skipped. No separate "seed and retry" endpoint needed.
+  const goOn = () => runAction(`/jobs/${jobId}/continue-historical`, { method: "POST" }, "Continuing…");
+
+  const paint = (message, continueLabel) => {
+    setCard(`
+      <div class="stage-intro">
+        <h2>${escapeHtml(current.title)}</h2>
+      </div>
+      <div class="decision-panel">
+        <div class="decision-info">
+          <div class="decision-info-row">
+            <span class="guidance-icon guidance-icon-art">${detailIconMarkup("identity", "guidance-detail-icon")}</span>
+            <p class="decision-copy">${escapeHtml(message)}</p>
+          </div>
+        </div>
+        <details class="audit-preview" id="historicalWarnSeedPanel">
+          <summary>${iconMarkup("database")}<span>Seed historical data now instead</span></summary>
+          <div class="historical-panel-body">
+            ${historicalSeedPanelMarkup("historicalWarn")}
+          </div>
+        </details>
+        <div class="row-actions">
+          <button id="continueHistoricalBtn">${iconMarkup("check")}<span>${continueLabel}</span></button>
+        </div>
+      </div>
+    `);
+    document.getElementById("continueHistoricalBtn").onclick = goOn;
+    wireHistoricalSeedPanel("historicalWarn", (status) => {
+      if (status.seeded) {
+        paint(
+          `Seeded ${(status.row_count || 0).toLocaleString()} row(s). Click Continue to run the historical override using this data.`,
+          "Continue (will use the data just seeded)",
+        );
+      }
+    });
+  };
+
+  paint(current.message, "Continue without historical data");
 }
 
 function renderConfirmStage(current) {

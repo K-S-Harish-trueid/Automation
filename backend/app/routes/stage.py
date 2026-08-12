@@ -79,6 +79,19 @@ def current_stage_detail(job_id: str, page: int = 1):
             payload["invalid_name_count"] = int(pipeline.mask_name_invalid(df).sum())
         return payload
 
+    # Paused mid-auto-chain by background.py because historical.db was
+    # empty/unseeded when the "replace" stage ran -- not a static stage type
+    # in the registry, just this job's stage_index sitting still with
+    # status["pending_warning"] set until /continue-historical clears it.
+    pending_warning = status.get("pending_warning")
+    if stage["type"] == "auto" and pending_warning and pending_warning["stage_id"] == stage["id"]:
+        return {
+            "type": "historical_warning",
+            "stage_id": stage["id"],
+            "title": stage["title"],
+            "message": pending_warning["message"],
+        }
+
     if stage["type"] == "confirm":
         preview_fn = pipeline.CONFIRM_PREVIEW.get(stage["id"])
         count = preview_fn(df) if preview_fn else 0
@@ -212,6 +225,47 @@ def update_historical(job_id: str):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"updated_rows": updated}
+
+
+@router.post("/api/jobs/{job_id}/continue-historical")
+def continue_without_historical(job_id: str):
+    """Resumes a job paused at the historical-override step because
+    historical.db was empty/unseeded (background.py's pending_warning
+    pause) -- the operator has seen the warning and chosen to proceed. If
+    they seeded historical.db first, the re-run of stage_replace_from_sql
+    below applies the real override, so this needs the same rollback
+    checkpoint every other gate-resolving route takes before touching data.
+    Marks the job acknowledged so the auto-stage loop won't pause here again
+    once it re-runs and finalizes this stage, then keeps going through the
+    rest of the pipeline exactly like resuming any other gate."""
+    status = _require_job(job_id)
+    stage = _current_stage(status)
+    pending_warning = status.get("pending_warning")
+    if stage is None or not pending_warning or pending_warning["stage_id"] != stage["id"]:
+        raise HTTPException(400, "No pending historical-data warning to continue past")
+
+    if not store.try_begin_processing(job_id):
+        raise HTTPException(409, "Job is already processing")
+    try:
+        store.create_checkpoint(job_id, f"Before {stage['title']}", stage["id"])
+    except OSError as e:
+        store.end_processing(job_id)
+        raise HTTPException(500, f"The backend could not write a rollback checkpoint: {e}") from e
+
+    total = len(status["stages"])
+    store.set_progress(
+        job_id, status="processing", current_step_index=status["stage_index"] + 1,
+        total_steps=total, current_step_name=stage["title"],
+        percent=round(status["stage_index"] / total * 100),
+    )
+
+    def resolve_gate():
+        st = store.get_status(job_id)
+        st["historical_ack"] = True
+        st.pop("pending_warning", None)
+
+    _run_in_background(job_id, resolve_gate)
+    return {"job_id": job_id, "status": "processing"}
 
 
 @router.post("/api/jobs/{job_id}/draft")

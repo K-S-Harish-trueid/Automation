@@ -2,6 +2,8 @@ jobs/*
 !jobs/.gitkeep
 data/*
 !data/.gitkeep
+!data/seed_historical.py
+!data/create_xlsx_2_db.py
 __pycache__/
 *.pyc
 .venv/

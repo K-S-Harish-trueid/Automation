@@ -26,16 +26,14 @@ def validate_replace_reference_inputs(df: pd.DataFrame, ref_df: pd.DataFrame):
 def stage_replace_from_sql(df: pd.DataFrame, **_):
     """Auto-stage version of the historical override -- pulls the reference
     data straight from the SQLite cache (historical_db.py) instead of
-    requiring an uploaded file every job. Raises rather than silently
-    skipping the override if the cache hasn't been seeded yet, since a job
-    finishing with no historical data applied and no visible warning would
-    be a worse outcome than a clear pipeline error."""
+    requiring an uploaded file every job. This override is a refinement, not
+    a requirement: the rest of the pipeline works fine without it, so an
+    empty/unseeded historical.db is a warning in the stage summary, not a
+    job-blocking error -- the job just continues with nothing overridden."""
     from ...historical_db import has_data, load_reference_df
 
     if not has_data():
-        raise ValueError(
-            "Historical SQL store has not been seeded yet -- run historical_db.seed_from_file() first."
-        )
+        return df, "Warning: historical SQL store is empty (no historical.db data) -- historical override skipped, job continues unchanged."
     ref_df = load_reference_df(df["ACCOUNT_NUMBER"])
     return stage_replace_reference(df, ref_df=ref_df)
 
