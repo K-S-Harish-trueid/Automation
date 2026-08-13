@@ -1074,7 +1074,7 @@ function renderStage2Page() {
     scopeStage: 2,
     path: "/stage2/naresh-response",
     submitLabel: "Upload and apply",
-    processingLabel: "Applying Naresh's response — merging IDs and DOBs, rechecking…",
+    processingLabel: "Merging IDs, DOBs responses and rechecking…",
     filePickersHtml: filePickerMarkup("stage2FileInput", "stage2FileZone", "stage2FileName", "Select Naresh's response file", "ID Corrections + DOB Corrections sheets"),
     wireFilePickers: () => wireFilePicker("stage2FileInput", "stage2FileZone", "stage2FileName"),
     buildFormData: () => {
@@ -1096,7 +1096,7 @@ function renderStage3Page() {
     scopeStage: 3,
     path: "/stage3/haider-response",
     submitLabel: "Upload and apply",
-    processingLabel: "Applying Stage 3 response — merging CMS data and corrections…",
+    processingLabel: "Merging CMS data and stage 2 corrections…",
     // Grouped and numbered (not 3 identical stacked boxes) so it reads as
     // one 3-part handoff instead of three unrelated uploads -- each row also
     // gets its own icon (phone / card / person) instead of a repeated
@@ -1511,8 +1511,6 @@ function renderDone(current) {
         <span><b>Invalid addresses remaining</b>${(quality.invalid_addresses_remaining || 0).toLocaleString()}</span>
         <span><b>Missing phones remaining</b>${(quality.missing_phones_remaining || 0).toLocaleString()}</span>
         <span><b>Generated IDs assigned</b>${(quality.generated_ids_assigned || 0).toLocaleString()}</span>
-        <span><b>CMS matches</b>${(quality.cms_matches || 0).toLocaleString()}</span>
-        <span><b>CMS unmatched</b>${(quality.cms_unmatched || 0).toLocaleString()}</span>
       </div>
     </div>
     ${auditRows ? `
@@ -1524,8 +1522,8 @@ function renderDone(current) {
       </details>` : ""}
     <div class="row-actions">
       <button id="downloadBtn">Download final file</button>
+      <button id="updateHistoricalBtn" type="button">Update historical data</button>
       <button class="secondary" id="downloadAuditBtn">Download audit report (${(current.audit_event_count || 0).toLocaleString()})</button>
-      <button class="secondary quiet-action" id="updateHistoricalBtn" type="button">Update historical data</button>
     </div>
   `);
   document.getElementById("downloadBtn").onclick = () => {

@@ -1,0 +1,29 @@
+Model Evaluation - 2026-08-12 15:23:51
+Model: llama3.2:3b
+Input file: llms/training_data/address_validation.csv
+Output file: llms/data/eval_llama3.2_3b.xlsx
+Rows: 120 (100 scored VALID/INVALID, 20 SPECIAL, not scored)
+
+Accuracy (VALID/INVALID only): 93.0% (93/100)
+
+Confusion matrix (rows=true label, cols=predicted):
+PREDICTED   INVALID  UNKNOWN  VALID
+TRUE_LABEL                         
+INVALID          45        2      3
+VALID             2        0     48
+
+SPECIAL rows (corrupted-but-real address) -- not scored, just tallied:
+  predicted VALID: 12/20
+  predicted INVALID: 8/20
+
+Timing:
+  Total time: 136.69s | Avg/row: 1.14s | Min: 0.55s | Max: 2.13s
+
+Misclassified (VALID/INVALID only):
+  true=INVALID pred=UNKNOWN TEST123
+  true=VALID   pred=INVALID BGDAD AL-SIDDIYYAH M 873 1 DAR 72
+  true=VALID   pred=INVALID BGDAD / THE CYCLE/ MSAFA ALDORH
+  true=INVALID pred=UNKNOWN 0
+  true=INVALID pred=VALID   ...
+  true=INVALID pred=VALID   طظكمنتالب
+  true=INVALID pred=VALID   شسيبلاهتن

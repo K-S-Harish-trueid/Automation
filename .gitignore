@@ -7,6 +7,7 @@ graphify-out/
 .claude/
 aman/
 llms/data/
+llms/training_data/
 .vscode/
 TODO
 DONE
@@ -17,6 +18,8 @@ dummy_data/Historical_Dataset.xlsx
 frontend_backup_*/
 testing/
 alternate/
+frontend_2/
+backend_2/
 dummy_data/downloads/
 ngrok_live.log
 *.log

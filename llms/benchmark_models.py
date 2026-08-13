@@ -22,13 +22,25 @@ OUTPUT_DIR = "llms/data"
 REPORT_FILE = "llms/benchmark_report.txt"
 NUM_ROWS = 10
 
-PROMPT_TEMPLATE = """You are an address validation assistant. The addresses may be written in Arabic, English, or a transliteration of Arabic, and may be incomplete (e.g. neighborhood/district only, no house or street number).
+# Synced from evaluate_model.py's v5 prompt (2026-08-12) -- see that file's
+# docstring/comment history for why this wording was chosen (criteria-based,
+# no per-example patching, no few-shot examples pulled from the eval set).
+PROMPT_TEMPLATE = """You are validating the ACCOUNT_ADDRESS field from a KYC customer-intake system used in Iraq. Real addresses here are often informal and incomplete: people describe where they live by neighborhood, district, city, or a landmark ("near <place>"), written in Arabic, English, or a transliteration of Arabic -- not a formatted street+number postal address. Brevity, missing house/street numbers, and non-standard spelling are NORMAL for this dataset and do NOT by themselves make an address invalid.
 
-Task: decide whether the text below is a plausible, real-world postal/residential address (e.g. it names a real place, district, street, or landmark), as opposed to gibberish, a placeholder, or clearly unrelated text.
+Judge the text below as VALID if it plausibly names or points to a real-world place -- a neighborhood, district, street, city, landmark, or a "near <place>" description -- no matter how short, informal, or which script/language it uses.
 
-Respond in exactly this format, nothing else:
-Verdict: VALID or INVALID
+Judge it INVALID only if it falls into one of these buckets, and does not also describe a place:
+- Placeholder / not-collected text (e.g. "N/A", "none", "unknown", "TBD", "-", "?"), in any language or script
+- Keyboard mash or characters with no recognizable words, in any language or script
+- Data belonging to a different field: a phone number, ID/account number, date, email address, or a person's name
+- A sentence, instruction, or comment with no place reference (e.g. a request, a status note)
+- Only digits and/or punctuation, with no place name
+
+You MUST respond in EXACTLY this two-line format -- both lines are REQUIRED, including the word Verdict, even when the verdict is INVALID:
+Verdict: <VALID or INVALID>
 Reason: <one short sentence>
+
+Now evaluate this address. Respond with ONLY the two lines in the format above -- no preamble, no extra explanation.
 
 Address: "{address}"
 """
