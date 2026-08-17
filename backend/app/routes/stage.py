@@ -19,6 +19,7 @@ from ..helpers import (
     _require_job,
     _upload_metrics,
     _validate_edit_items,
+    _workbook_summary,
 )
 from ..schemas import DraftRequest, EditItem, SubmitRequest
 
@@ -210,10 +211,11 @@ async def upload_reference(job_id: str, file: UploadFile = File(...)):
 def update_historical(job_id: str):
     """Insert-or-replace this completed job's accounts into the historical
     SQL store (historical_db.py) -- keyed on ACCOUNT_NUMBER via
-    INSERT OR REPLACE, so calling this again later (even on the same job)
-    never duplicates rows, it just refreshes them. Only available once the
-    job is finished. Fast enough (SQLite bulk insert, no xlsx parse) to run
-    synchronously in the request instead of needing progress tracking."""
+    ON CONFLICT DO UPDATE, so calling this again later (even on the same
+    job) never duplicates rows, it just refreshes them (and re-stamps which
+    job/when). Only available once the job is finished. Fast enough (bulk
+    insert, no xlsx parse) to run synchronously in the request instead of
+    needing progress tracking."""
     status = _require_job(job_id)
     stage = _current_stage(status)
     if stage is not None and stage["type"] != "done":
@@ -221,7 +223,7 @@ def update_historical(job_id: str):
 
     df = store.get_df(job_id)
     try:
-        updated = historical_db.upsert_rows(df)
+        updated = historical_db.upsert_rows(df, job_id=job_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"updated_rows": updated}
@@ -297,8 +299,7 @@ def clear_draft(job_id: str):
     return {"cleared": True}
 
 
-@router.get("/api/jobs/{job_id}/workbook")
-def download_workbook(job_id: str):
+def _write_and_get_workbook_path(job_id: str):
     status = _require_job(job_id)
     if store.is_processing(job_id):
         raise HTTPException(409, "Wait for the current processing step before downloading the review workbook")
@@ -324,7 +325,19 @@ def download_workbook(job_id: str):
             sheet_name = stage["title"][:31]
             flagged.to_excel(writer, sheet_name=sheet_name, index=False)
             _autofit_worksheet(writer.sheets[sheet_name], flagged)
+    return out_path
+
+
+@router.get("/api/jobs/{job_id}/workbook")
+def download_workbook(job_id: str):
+    out_path = _write_and_get_workbook_path(job_id)
     return FileResponse(out_path, filename="K2_Manual_Review.xlsx")
+
+
+@router.get("/api/jobs/{job_id}/workbook/summary")
+def summary_workbook(job_id: str):
+    out_path = _write_and_get_workbook_path(job_id)
+    return _workbook_summary(out_path)
 
 
 def _submit_manual_edits(

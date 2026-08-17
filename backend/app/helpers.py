@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 from fastapi import HTTPException
@@ -283,6 +284,25 @@ def _write_flat_xlsx(df: pd.DataFrame, out_path) -> None:
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         out_df.to_excel(writer, sheet_name="Final Output", index=False)
         _autofit_worksheet(writer.sheets["Final Output"], out_df)
+
+
+def _workbook_summary(path) -> dict:
+    """Sheet names + row counts for an already-written xlsx (or the raw
+    upload, which may be .csv instead) -- backs the "what's actually in
+    this file" preview shown next to every download button, so an operator
+    can see the shape of a handoff file without downloading and opening it.
+    Reads via pandas (all sheets at once for xlsx) rather than a lighter
+    read-only sheet-dimension trick -- every file this looks at is a
+    dispatch/review handoff (tens-hundreds of rows) or, at most, the raw
+    upload (tens of thousands), so a full parse is still fast and this
+    stays consistent with how every other reader in this codebase works."""
+    path = Path(path)
+    if path.suffix.lower() == ".csv":
+        df = store.read_table(path.read_bytes(), path.name)
+        return {"sheets": [{"name": path.stem, "rows": len(df)}], "total_rows": len(df)}
+    sheets = pd.read_excel(path, sheet_name=None, dtype=str, engine="calamine")
+    entries = [{"name": name, "rows": len(df)} for name, df in sheets.items()]
+    return {"sheets": entries, "total_rows": sum(entry["rows"] for entry in entries)}
 
 
 def _upload_metrics(df: pd.DataFrame, ref_df: pd.DataFrame) -> dict:

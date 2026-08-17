@@ -22,6 +22,7 @@ stage_id happens to be current when they're called -- e.g. naresh-response
 lives under /stage2/ because it's Stage 2's core action, even though it
 resolves the stage1_dispatch stage_id."""
 import io
+from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -33,6 +34,7 @@ from ..helpers import (
     _append_audit_events,
     _current_stage,
     _require_job,
+    _workbook_summary,
     _write_stage1_haider_xlsx,
     _write_stage1_naresh_xlsx,
     _write_stage2_haider_xlsx,
@@ -71,16 +73,20 @@ def _begin_gate(job_id: str, status: dict, stage: dict):
 
 # ---- Stage 1: dispatch downloads -------------------------------------------
 
-def _download_frozen_dispatch_file(job_id: str, out_name: str, expected_stage_type: str, writer):
-    """Serve a stage dispatch file as a permanent artifact of the job instead
-    of regenerating it from the live dataframe on every call: the first
-    request (made while the job is actually parked at the matching stage)
-    freezes it to disk, and every request after that -- from any later
-    stage, including after the job is fully done -- just serves that same
-    frozen copy. Without this, the file becomes unrecoverable the moment the
-    job advances (the live dataframe has already been overwritten by
-    whoever's response resolved that stage), and the dashboard's "last
-    generated file" download would have nothing stable to point at."""
+def _ensure_frozen_dispatch_file(job_id: str, out_name: str, expected_stage_type: str, writer) -> Path:
+    """Freeze a stage dispatch file to disk as a permanent artifact of the
+    job instead of regenerating it from the live dataframe on every call:
+    the first request (made while the job is actually parked at the
+    matching stage) freezes it, and every request after that -- from any
+    later stage, including after the job is fully done -- just reuses that
+    same frozen copy. Without this, the file becomes unrecoverable the
+    moment the job advances (the live dataframe has already been
+    overwritten by whoever's response resolved that stage), and the
+    dashboard's "last generated file" download would have nothing stable to
+    point at. Shared by both the actual download route and its /summary
+    sibling below -- same freeze semantics either way, so viewing the
+    summary before downloading doesn't produce a different file than
+    downloading first would have."""
     status = _require_job(job_id)
     out_path = store.JOBS_DIR / job_id / out_name
     if not out_path.exists():
@@ -90,6 +96,11 @@ def _download_frozen_dispatch_file(job_id: str, out_name: str, expected_stage_ty
         if store.is_processing(job_id):
             raise HTTPException(409, "Wait for the current processing step before downloading")
         writer(store.get_df(job_id), out_path)
+    return out_path
+
+
+def _download_frozen_dispatch_file(job_id: str, out_name: str, expected_stage_type: str, writer):
+    out_path = _ensure_frozen_dispatch_file(job_id, out_name, expected_stage_type, writer)
     return FileResponse(out_path, filename=f"{job_id}_{out_name}")
 
 
@@ -98,9 +109,21 @@ def download_stage1_haider(job_id: str):
     return _download_frozen_dispatch_file(job_id, "stage1_haider.xlsx", "stage1", _write_stage1_haider_xlsx)
 
 
+@router.get("/api/jobs/{job_id}/stage1/haider.xlsx/summary")
+def summary_stage1_haider(job_id: str):
+    out_path = _ensure_frozen_dispatch_file(job_id, "stage1_haider.xlsx", "stage1", _write_stage1_haider_xlsx)
+    return _workbook_summary(out_path)
+
+
 @router.get("/api/jobs/{job_id}/stage1/naresh.xlsx")
 def download_stage1_naresh(job_id: str):
     return _download_frozen_dispatch_file(job_id, "stage1_naresh.xlsx", "stage1", _write_stage1_naresh_xlsx)
+
+
+@router.get("/api/jobs/{job_id}/stage1/naresh.xlsx/summary")
+def summary_stage1_naresh(job_id: str):
+    out_path = _ensure_frozen_dispatch_file(job_id, "stage1_naresh.xlsx", "stage1", _write_stage1_naresh_xlsx)
+    return _workbook_summary(out_path)
 
 
 # ---- Stage 2: input -> merge -> verify -> dispatch -------------------------
@@ -167,6 +190,12 @@ async def apply_naresh_response(job_id: str, file: UploadFile = File(...)):
 @router.get("/api/jobs/{job_id}/stage2/haider.xlsx")
 def download_stage2_haider(job_id: str):
     return _download_frozen_dispatch_file(job_id, "stage2_haider.xlsx", "stage2", _write_stage2_haider_xlsx)
+
+
+@router.get("/api/jobs/{job_id}/stage2/haider.xlsx/summary")
+def summary_stage2_haider(job_id: str):
+    out_path = _ensure_frozen_dispatch_file(job_id, "stage2_haider.xlsx", "stage2", _write_stage2_haider_xlsx)
+    return _workbook_summary(out_path)
 
 
 # ---- Stage 3: three-file input -> merge -> (final_id_check/default_id) -----

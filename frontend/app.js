@@ -261,6 +261,34 @@ function formatFileSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Sheet-name/row-count preview shown under every download button, so seeing
+// what's in a handoff file doesn't require downloading and opening it first
+// (backed by GET .../summary siblings of each download route -- see
+// _workbook_summary in helpers.py). Placeholder markup goes in immediately;
+// loadWorkbookSummary fills it in once the (async) fetch resolves.
+function workbookSummaryMarkup(containerId) {
+  return `<div class="workbook-summary" id="${containerId}"><span class="muted">Reading file contents…</span></div>`;
+}
+
+async function loadWorkbookSummary(containerId, summaryPath) {
+  const el = document.getElementById(containerId);
+  if (!el) return; // screen moved on before the fetch resolved
+  try {
+    const data = await api(summaryPath);
+    const sheets = data.sheets || [];
+    if (!sheets.length) { el.innerHTML = `<span class="muted">Empty.</span>`; return; }
+    const rows = sheets.map((s) => `<tr><td>${escapeHtml(s.name)}</td><td>${s.rows.toLocaleString()}</td></tr>`).join("");
+    el.innerHTML = `
+      <table class="workbook-summary-table">
+        <thead><tr><th>Sheet</th><th>Rows</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (e) {
+    el.innerHTML = `<span class="muted">Couldn't read file contents.</span>`;
+  }
+}
+
 function wireFilePicker(inputId, zoneId, fileNameId, onFileSelected) {
   const input = document.getElementById(inputId);
   const zone = document.getElementById(zoneId);
@@ -1453,10 +1481,10 @@ function renderStageWaitScreen(current) {
   const isStage1 = current.type === "stage1";
   const downloads = isStage1
     ? [
-        { label: "Download Haider's Stage 1 file", href: `${API}/jobs/${jobId}/stage1/haider.xlsx` },
-        { label: "Download Naresh's Stage 1 file", href: `${API}/jobs/${jobId}/stage1/naresh.xlsx` },
+        { label: "Download Haider's Stage 1 file", href: `${API}/jobs/${jobId}/stage1/haider.xlsx`, summaryPath: `/jobs/${jobId}/stage1/haider.xlsx/summary` },
+        { label: "Download Naresh's Stage 1 file", href: `${API}/jobs/${jobId}/stage1/naresh.xlsx`, summaryPath: `/jobs/${jobId}/stage1/naresh.xlsx/summary` },
       ]
-    : [{ label: "Download Stage 2 file (for Haider)", href: `${API}/jobs/${jobId}/stage2/haider.xlsx` }];
+    : [{ label: "Download Stage 2 file (for Haider)", href: `${API}/jobs/${jobId}/stage2/haider.xlsx`, summaryPath: `/jobs/${jobId}/stage2/haider.xlsx/summary` }];
   const stillInvalid = (current.invalid_id_count || 0) + (current.invalid_dob_count || 0) + (current.invalid_name_count || 0);
   const invalidNote = !STAGE_DETAILS_VERBOSE || isStage1
     ? ""
@@ -1469,15 +1497,19 @@ function renderStageWaitScreen(current) {
       <h2>${escapeHtml(current.title)}</h2>
       ${invalidNote}
     </div>
-    <div class="row-actions">
-      ${downloads.map((d, i) => `<button class="secondary" id="stageDownloadBtn${i}" type="button">${iconMarkup("download")}<span>${escapeHtml(d.label)}</span></button>`).join("")}
-    </div>
+    ${downloads.map((d, i) => `
+      <div class="row-actions">
+        <button class="secondary" id="stageDownloadBtn${i}" type="button">${iconMarkup("download")}<span>${escapeHtml(d.label)}</span></button>
+      </div>
+      ${workbookSummaryMarkup(`stageDownloadSummary${i}`)}
+    `).join("")}
     <div class="row-actions">
       <button id="stageNextBtn" type="button">${iconMarkup("play")}<span>${nextLabel}</span></button>
     </div>
   `);
   downloads.forEach((d, i) => {
     document.getElementById(`stageDownloadBtn${i}`).onclick = () => { window.location.href = d.href; };
+    loadWorkbookSummary(`stageDownloadSummary${i}`, d.summaryPath);
   });
   document.getElementById("stageNextBtn").onclick = () => (isStage1 ? renderStage2Page() : renderStage3Page());
 }
@@ -1523,8 +1555,12 @@ function renderDone(current) {
     <div class="row-actions">
       <button id="downloadBtn">Download final file</button>
       <button id="updateHistoricalBtn" type="button">Update historical data</button>
+    </div>
+    ${workbookSummaryMarkup("finalDownloadSummary")}
+    <div class="row-actions">
       <button class="secondary" id="downloadAuditBtn">Download audit report (${(current.audit_event_count || 0).toLocaleString()})</button>
     </div>
+    ${workbookSummaryMarkup("auditDownloadSummary")}
   `);
   document.getElementById("downloadBtn").onclick = () => {
     window.location.href = `${API}/jobs/${jobId}/download`;
@@ -1532,6 +1568,8 @@ function renderDone(current) {
   document.getElementById("downloadAuditBtn").onclick = () => {
     window.location.href = `${API}/jobs/${jobId}/audit/download`;
   };
+  loadWorkbookSummary("finalDownloadSummary", `/jobs/${jobId}/download/summary`);
+  loadWorkbookSummary("auditDownloadSummary", `/jobs/${jobId}/audit/download/summary`);
   document.getElementById("updateHistoricalBtn").onclick = async () => {
     if (isBusy) return;
     if (!window.confirm("Add this job's accounts into the historical SQL store? Existing entries for matching accounts will be refreshed, not duplicated.")) return;
@@ -1728,6 +1766,7 @@ function renderManualEditStage(current) {
       </div>` : ""}
       <div class="workbook-panel-actions">
         <button class="secondary" id="downloadWorkbookBtn" type="button">${iconMarkup("download")}<span>Download review workbook</span></button>
+        ${workbookSummaryMarkup("workbookDownloadSummary")}
         <label class="workbook-file-input" for="workbookFileInput" title="Select the completed review workbook">
           <input class="file-input" type="file" id="workbookFileInput" accept=".xlsx,.xls" />
           <span class="file-picker-trigger">Choose completed workbook</span>
@@ -1768,6 +1807,7 @@ function renderManualEditStage(current) {
   document.getElementById("downloadWorkbookBtn").onclick = () => {
     window.location.href = `${API}/jobs/${jobId}/workbook`;
   };
+  loadWorkbookSummary("workbookDownloadSummary", `/jobs/${jobId}/workbook/summary`);
   const workbookInput = document.getElementById("workbookFileInput");
   const workbookFileName = document.getElementById("workbookFileName");
   workbookInput.addEventListener("change", () => {

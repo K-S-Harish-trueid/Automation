@@ -1138,6 +1138,18 @@ button.job-history-download:active:not(:disabled) {
 .review-stat-label { color: var(--muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
 .review-stat-value { color: var(--text); font-size: 14px; font-weight: 600; }
 
+/* Sheet/row-count preview under a download button (workbookSummaryMarkup in
+   app.js) -- plain var() tokens throughout, no dark-only literals, so this
+   needs no [data-theme="light"] override block at all. */
+.workbook-summary { margin: 6px 0 16px; }
+.workbook-summary-table { border-collapse: collapse; font-size: 12px; }
+.workbook-summary-table th,
+.workbook-summary-table td { padding: 3px 16px 3px 0; text-align: left; }
+.workbook-summary-table th { color: var(--muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.workbook-summary-table td { color: var(--text-soft); }
+.workbook-summary-table td:last-child { font-family: var(--font-mono); }
+.workbook-summary-total td { color: var(--text); font-weight: 600; border-top: 1px solid var(--border-soft); }
+
 .table-wrap {
   max-height: 56vh;
   overflow: auto;
