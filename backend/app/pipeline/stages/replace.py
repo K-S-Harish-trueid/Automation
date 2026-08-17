@@ -25,7 +25,7 @@ def validate_replace_reference_inputs(df: pd.DataFrame, ref_df: pd.DataFrame):
 
 def stage_replace_from_sql(df: pd.DataFrame, **_):
     """Auto-stage version of the historical override -- pulls the reference
-    data straight from the SQLite cache (historical_db.py) instead of
+    data straight from the Postgres cache (historical_db.py) instead of
     requiring an uploaded file every job. This override is a refinement, not
     a requirement: the rest of the pipeline works fine without it, so an
     empty/unseeded historical.db is a warning in the stage summary, not a

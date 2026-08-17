@@ -4,9 +4,22 @@ this file small so "do I need to open the toolbox?" stays a rare question.
 """
 import pandas as pd
 
-NOT_COLLECTED = "XXX_NOT_COLLECTED_XXX"
+from ..rules_config import (
+    CIVIL_ID_SYNONYMS,
+    EXTRA_EMPTY_PLACEHOLDER_VALUES,
+    NATIONAL_ID_REGEX,
+    NATIONAL_ID_SYNONYMS,
+    NOT_COLLECTED_PLACEHOLDER,
+    PASSPORT_ID_REGEX,
+    PASSPORT_ID_SYNONYMS,
+)
 
-PLACEHOLDERS = {"", "0", "00000", "null", "none", "na", "n/a", "xxx_not_collected_xxx"}
+NOT_COLLECTED = NOT_COLLECTED_PLACEHOLDER
+
+# "" is always empty regardless of config; NOT_COLLECTED is folded in here
+# (lowercased) so the two settings can never drift out of sync with each
+# other.
+PLACEHOLDERS = {"", NOT_COLLECTED.lower(), *EXTRA_EMPTY_PLACEHOLDER_VALUES}
 
 
 def _s(df: pd.DataFrame, col: str) -> pd.Series:
@@ -120,14 +133,14 @@ def compute_id_validity(df: pd.DataFrame):
     type_avail = type_avail & ~is_doc
     num_avail = num_avail & ~is_doc
 
-    is_passport = (id_type_l == "passport") & type_avail
-    is_nid = id_type_l.isin(["national id", "nid", "nationalid"]) & type_avail
-    is_civil = id_type_l.isin(["civil id", "civilid", "civil_id"]) & type_avail
+    is_passport = id_type_l.isin(PASSPORT_ID_SYNONYMS) & type_avail
+    is_nid = id_type_l.isin(NATIONAL_ID_SYNONYMS) & type_avail
+    is_civil = id_type_l.isin(CIVIL_ID_SYNONYMS) & type_avail
 
     type_valid = (is_passport | is_nid | is_civil) & type_avail
 
-    passport_ok = id_num_s.str.fullmatch(r"[A-Za-z][A-Za-z0-9]{7,8}", na=False)
-    nid_ok = id_num_s.str.fullmatch(r"\d{12}", na=False)
+    passport_ok = id_num_s.str.fullmatch(PASSPORT_ID_REGEX, na=False)
+    nid_ok = id_num_s.str.fullmatch(NATIONAL_ID_REGEX, na=False)
 
     num_valid = pd.Series(False, index=df.index)
     num_valid |= is_passport & num_avail & passport_ok
@@ -145,9 +158,9 @@ def id_reason_checks(df: pd.DataFrame) -> list[tuple[pd.Series, str]]:
     id_number = _s(df, "ID_NUMBER")
     type_available = series_available(id_type)
     number_available = series_available(id_number)
-    is_passport = id_type_lower.eq("passport")
-    is_national_id = id_type_lower.isin(["national id", "nid", "nationalid"])
-    is_civil_id = id_type_lower.isin(["civil id", "civilid", "civil_id"])
+    is_passport = id_type_lower.isin(PASSPORT_ID_SYNONYMS)
+    is_national_id = id_type_lower.isin(NATIONAL_ID_SYNONYMS)
+    is_civil_id = id_type_lower.isin(CIVIL_ID_SYNONYMS)
     accepted_type = is_passport | is_national_id | is_civil_id
 
     return [
@@ -155,9 +168,13 @@ def id_reason_checks(df: pd.DataFrame) -> list[tuple[pd.Series, str]]:
          "ID type 'doc' is not accepted. Use Passport, National Id, or Civil Id."),
         ((~type_available) | ((~accepted_type) & type_available & ~id_type_lower.eq("doc")),
          "ID type must be Passport, National Id, or Civil Id."),
-        (is_passport & ~id_number.str.fullmatch(r"[A-Za-z][A-Za-z0-9]{7,8}", na=False),
+        # These two message strings describe the DEFAULT regex in plain
+        # English -- if PASSPORT_ID_REGEX/NATIONAL_ID_REGEX get overridden
+        # via .env to something else, update this text to match (can't be
+        # derived automatically from an arbitrary regex).
+        (is_passport & ~id_number.str.fullmatch(PASSPORT_ID_REGEX, na=False),
          "Passport number must contain 8-9 alphanumeric characters and start with a letter."),
-        (is_national_id & ~id_number.str.fullmatch(r"\d{12}", na=False),
+        (is_national_id & ~id_number.str.fullmatch(NATIONAL_ID_REGEX, na=False),
          "National ID must contain exactly 12 digits."),
         (is_civil_id & ~number_available, "Civil ID number is required."),
         ((~accepted_type) & ~number_available,

@@ -2,6 +2,7 @@ import random
 
 import pandas as pd
 
+from ...rules_config import GENERATED_ID_PREFIX, GENERATED_ID_RANDOM_DIGITS
 from ..toolbox import _s, compute_id_validity
 
 
@@ -17,9 +18,10 @@ def stage_default_id_assign(df: pd.DataFrame, **_):
     used = set(_s(df, "ID_NUMBER"))
     rnd = random.Random()
     new_ids = []
+    max_value = 10 ** GENERATED_ID_RANDOM_DIGITS - 1
     for _ in range(int(invalid_mask.sum())):
         while True:
-            candidate = "00" + f"{rnd.randint(0, 999999):06d}"
+            candidate = GENERATED_ID_PREFIX + f"{rnd.randint(0, max_value):0{GENERATED_ID_RANDOM_DIGITS}d}"
             if candidate not in used:
                 used.add(candidate)
                 new_ids.append(candidate)

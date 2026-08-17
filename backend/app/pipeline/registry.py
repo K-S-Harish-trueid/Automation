@@ -38,9 +38,9 @@ STAGES = [
     {"id": "clean", "title": "Initial Data Cleaning", "type": "auto", "stage": 1},
     # Was an "upload" gate (operator picks a file, or the old "Skip"/"Use
     # from SQL" buttons); now fully automatic -- pulls straight from the
-    # SQLite historical cache (historical_db.py) every job. Still type
-    # "auto" here, but NOT unconditionally pause-free: if historical.db is
-    # empty/unseeded, background.py's auto-stage loop and routes/stage.py's
+    # Postgres historical cache (historical_db.py) every job. Still type
+    # "auto" here, but NOT unconditionally pause-free: if the historical
+    # store is empty/unseeded, background.py's auto-stage loop and routes/stage.py's
     # /current both special-case this exact stage id to pause the pipeline
     # into a gate (see the "replace" checks in both files) instead of
     # silently skipping the override. Renaming this id means updating those

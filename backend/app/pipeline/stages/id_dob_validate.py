@@ -1,11 +1,13 @@
 import pandas as pd
 
+from ...rules_config import AGE_OF_MAJORITY, DOB_CUTOFF
 from ..toolbox import _reasons_by_row, _s, compute_id_validity, id_reason_checks, parse_dob_series, series_available
 
 # The default/placeholder DOB is 1 Jan 1905 -- per requirement, any DOB after
 # this exact date is valid (so e.g. 1905-02-01 is fine), only this date
-# itself or anything earlier is treated as a non-real DOB.
-DEFAULT_DOB_CUTOFF = pd.Timestamp("1905-01-01")
+# itself or anything earlier is treated as a non-real DOB. Configurable via
+# DOB_CUTOFF_DATE in .env -- see rules_config.py.
+DEFAULT_DOB_CUTOFF = DOB_CUTOFF
 
 
 def _age_years(reference_date, parsed_dob: pd.Series) -> pd.Series:
@@ -61,8 +63,8 @@ def compute_dob_validity(df: pd.DataFrame) -> pd.Series:
     not_future_dob = parsed <= today
     opened_parsed = _opened_parsed(df)
     not_future_opened = opened_parsed.isna() | (opened_parsed <= today)
-    is_adult_now = _age_years_now(parsed) >= 18
-    is_adult_at_opening = _age_years_at_opening(df, parsed) >= 18
+    is_adult_now = _age_years_now(parsed) >= AGE_OF_MAJORITY
+    is_adult_at_opening = _age_years_at_opening(df, parsed) >= AGE_OF_MAJORITY
     return (
         avail & valid_format & after_cutoff & not_future_dob & not_future_opened
         & is_adult_now & is_adult_at_opening
@@ -94,10 +96,14 @@ def _dob_reason_checks(df: pd.DataFrame, dob: pd.Series, parsed: pd.Series) -> l
     # DOB producing a negative "current age" that would otherwise misreport
     # as "currently under 18").
     sane_dob = parsed.notna() & (parsed > DEFAULT_DOB_CUTOFF) & (parsed <= today)
+    # Dynamic, not hardcoded text -- if DOB_CUTOFF_DATE/AGE_OF_MAJORITY get
+    # overridden via .env, the operator-facing reason still matches the
+    # actual rule instead of quoting the old default.
+    cutoff_label = f"{DEFAULT_DOB_CUTOFF.day} {DEFAULT_DOB_CUTOFF.strftime('%B %Y')}"
     return [
         (~dob_available, "DOB is missing."),
         (dob_available & parsed.isna(), "DOB is not a recognized date."),
-        (parsed.notna() & (parsed <= DEFAULT_DOB_CUTOFF), "DOB must be after 1 January 1905."),
+        (parsed.notna() & (parsed <= DEFAULT_DOB_CUTOFF), f"DOB must be after {cutoff_label}."),
         (parsed.notna() & (parsed > DEFAULT_DOB_CUTOFF) & (parsed > today), "DOB is in the future."),
         # Opening-date plausibility and age are separate, both-can-be-true
         # facts about a row (unlike the two age checks below, which are two
@@ -108,9 +114,9 @@ def _dob_reason_checks(df: pd.DataFrame, dob: pd.Series, parsed: pd.Series) -> l
         # while they were still a minor -- so a row gets exactly one of
         # these two reasons, not both, for what's really one underlying age
         # problem.
-        (sane_dob & age_now.lt(18), "Customer is currently under 18."),
-        (sane_dob & age_now.ge(18) & age_at_opening.lt(18),
-         "Customer was under 18 when the account was opened."),
+        (sane_dob & age_now.lt(AGE_OF_MAJORITY), f"Customer is currently under {AGE_OF_MAJORITY}."),
+        (sane_dob & age_now.ge(AGE_OF_MAJORITY) & age_at_opening.lt(AGE_OF_MAJORITY),
+         f"Customer was under {AGE_OF_MAJORITY} when the account was opened."),
     ]
 
 
