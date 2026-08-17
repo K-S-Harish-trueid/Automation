@@ -15,9 +15,9 @@ import pandas as pd
 import ollama
 
 MODEL = "command-r7b-arabic"
-INPUT_FILE = "llms/data/K2_DATA_PAH_20260422_address.xlsx"
-OUTPUT_FILE = "llms/data/address_validation_results.xlsx"
-REPORT_FILE = "llms/report.txt"
+INPUT_FILE = "excess/llms/data/K2_DATA_PAH_20260422_address.xlsx"
+OUTPUT_FILE = "excess/llms/data/address_validation_results.xlsx"
+REPORT_FILE = "excess/llms/report.txt"
 NUM_ROWS = 10
 
 # Synced from evaluate_model.py's v5 prompt (2026-08-12) -- see that file's

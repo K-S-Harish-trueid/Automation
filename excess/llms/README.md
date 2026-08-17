@@ -21,7 +21,7 @@ This is more important than raw quality when picking a model — a model that's 
 | `qwen3:4b` | ~135s avg on the rows tested (135s, 68s, 136s, 200s) | **Fails badly** — run was stopped before completion, far outside budget |
 | `gemma3:4b` | not benchmarked yet | — |
 
-The erratic spikes look like system resource contention (CPU/GPU load) rather than pure model-size effects, but until proven otherwise, treat any model that isn't consistently under ~10s/row as disqualified. Re-run `python llms/benchmark_models.py` (it skips models already benchmarked — see `llms/data/benchmark_*.xlsx`) to pick up where it left off, ideally when the machine isn't under other load, to get a cleaner read before ruling models out for good.
+The erratic spikes look like system resource contention (CPU/GPU load) rather than pure model-size effects, but until proven otherwise, treat any model that isn't consistently under ~10s/row as disqualified. Re-run `python excess/llms/benchmark_models.py` (it skips models already benchmarked — see `excess/llms/data/benchmark_*.xlsx`) to pick up where it left off, ideally when the machine isn't under other load, to get a cleaner read before ruling models out for good.
 
 ## Prerequisites
 

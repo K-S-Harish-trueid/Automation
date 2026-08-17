@@ -24,8 +24,8 @@ import pandas as pd
 import ollama
 
 MODEL = "gemma3:4b"
-INPUT_FILE = "llms/training_data/address_validation.csv"
-OUTPUT_DIR = "llms/data"
+INPUT_FILE = "excess/llms/training_data/address_validation.csv"
+OUTPUT_DIR = "excess/llms/data"
 
 # v5: earlier versions (see git history) tried patching specific misses with
 # hand-picked few-shot examples one at a time (v4 added a 5th example to fix
@@ -90,7 +90,7 @@ def main():
 
     safe_name = MODEL.replace(":", "_")
     out_file = f"{OUTPUT_DIR}/eval_{safe_name}.xlsx"
-    report_file = f"llms/eval_report_{safe_name}.txt"
+    report_file = f"excess/llms/eval_report_{safe_name}.txt"
 
     results = []
     row_times = []

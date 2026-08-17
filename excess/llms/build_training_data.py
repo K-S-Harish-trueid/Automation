@@ -22,8 +22,8 @@ import random
 
 import pandas as pd
 
-INPUT_FILE = "llms/data/K2_DATA_PAH_20260422_address.xlsx"
-OUTPUT_FILE = "llms/training_data/address_validation.csv"
+INPUT_FILE = "excess/llms/data/K2_DATA_PAH_20260422_address.xlsx"
+OUTPUT_FILE = "excess/llms/training_data/address_validation.csv"
 SEED = 42
 N_VALID = 50
 N_SPECIAL = 20

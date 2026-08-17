@@ -17,9 +17,9 @@ import ollama
 
 MODELS = ["llama3.2:3b", "llama3.2:1b"]
 # qwen3:4b, gemma3:4b, command-r7b-arabic excluded: too slow (well over the 10s/row hard max) or not yet worth the wait. Focusing on Llama models for raw speed.
-INPUT_FILE = "llms/data/K2_DATA_PAH_20260422_address.xlsx"
-OUTPUT_DIR = "llms/data"
-REPORT_FILE = "llms/benchmark_report.txt"
+INPUT_FILE = "excess/llms/data/K2_DATA_PAH_20260422_address.xlsx"
+OUTPUT_DIR = "excess/llms/data"
+REPORT_FILE = "excess/llms/benchmark_report.txt"
 NUM_ROWS = 10
 
 # Synced from evaluate_model.py's v5 prompt (2026-08-12) -- see that file's
