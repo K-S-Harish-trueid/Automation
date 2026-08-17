@@ -1,6 +1,6 @@
-"""Admin endpoints for the historical-override SQLite store (historical_db.py).
+"""Admin endpoints for the historical-override Postgres store (historical_db.py).
 
-Lets an operator (re)seed historical.db from an xlsx/csv export straight
+Lets an operator (re)seed the historical table from an xlsx/csv export straight
 through the web UI, instead of someone having to run data/seed_historical.py
 by hand on whatever machine the server happens to be on. Wraps
 historical_db.seed_from_bytes -- the same validation/dedup/index logic

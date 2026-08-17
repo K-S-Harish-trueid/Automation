@@ -13,6 +13,17 @@ Use the Python interpreter that will run the app:
 python -m pip install -r requirements.txt
 ```
 
+Needs a reachable **PostgreSQL** server for the historical-override store
+(see below) — set `DATABASE_URL`, e.g.:
+
+```
+postgresql+psycopg://postgres:postgres@localhost:5432/k2_historical
+```
+
+Falls back to that exact local-dev connection string if `DATABASE_URL` isn't
+set. The target database is created automatically on first connect if it
+doesn't exist yet; you still need Postgres itself installed and running.
+
 ## Run
 
 From this `backend/` folder:
@@ -46,14 +57,14 @@ to seed it. `dummy_cms_export.csv` predates the Stage 1/2/3 handoff below and
 is no longer consumed by an automatic stage — CMS mobile/card data now comes
 in through two direct CMS export files at Stage 3 instead (see below).
 
-### Historical override data (`historical.db`)
+### Historical override data (Postgres `historical` table)
 
 The `replace` stage (see the stage table below) matches each account against
-a historical reference table kept in SQLite at `data/historical.db`, not an
-uploaded file — parsing the ~130MB source xlsx on every job was too slow
-(see `app/historical_db.py`'s docstring), so it's imported once and queried
-from there instead. `data/` is gitignored (except the two scripts below), so
-a fresh clone starts with no `historical.db` at all.
+a historical reference table kept in Postgres (see `DATABASE_URL` above),
+not an uploaded file — parsing the ~130MB source xlsx on every job was too
+slow (see `app/historical_db.py`'s docstring), so it's imported once and
+queried from there instead. A fresh Postgres database starts with no
+`historical` table at all until seeded.
 
 Seed or reseed it any of these ways, all producing an identical table:
 
@@ -62,19 +73,21 @@ Seed or reseed it any of these ways, all producing an identical table:
   the store empty) lets an operator upload an xlsx/csv straight through the
   browser. Calls `POST /api/historical/seed`; `GET /api/historical/status`
   reports whether it's seeded and how many rows.
-- **`python backend/data/seed_historical.py [--source path] [--output path]`**
+- **`python backend/data/seed_historical.py [--source path] [--database-url url]`**
   — same import, run from a terminal. Defaults to this repo's
-  `dummy_data/Input Data/Stage 1/Historical_Dataset.xlsx` fixture and the
-  live `data/historical.db` path.
+  `dummy_data/Stage 1/Historical_Dataset.xlsx` fixture and
+  `DATABASE_URL` (or its local-dev default). If the source file isn't found
+  at its default path and `--source` wasn't given, it asks for the path
+  interactively instead of failing outright.
 - **`seed_historical.bat`** (project root, Windows) — double-click wrapper
   around the script above, using this repo's own `venv`.
-- **`python backend/data/create_xlsx_2_db.py <source.xlsx>`** — a generic,
-  standalone xlsx→SQLite converter with no dependency on this app's schema
-  (arbitrary columns, table name `data` by default). Not what seeds the live
-  store unless you pass `--table historical --output data/historical.db`
-  yourself; prefer `seed_historical.py` for that.
+- **`python backend/create_xlsx_2_db.py <source.xlsx>`** — a generic,
+  standalone xlsx→**SQLite** converter with no dependency on this app's
+  schema (arbitrary columns, table name `data` by default, writes a local
+  `.db` file). Unrelated to the live Postgres store — useful for quickly
+  poking at any xlsx as a queryable database, not for seeding `replace`.
 
-If a job reaches the `replace` stage while `historical.db` is empty or
+If a job reaches the `replace` stage while the historical store is empty or
 unseeded, the pipeline doesn't error out or silently skip it — it pauses
 into a gate (`GET /jobs/{id}/current` reports `type: "historical_warning"`)
 showing the operator a warning, an inline "seed now" option, and a Continue
@@ -126,7 +139,7 @@ backend/
                     each action endpoint returns
     store.py        Per-job state: in-memory dict + a disk snapshot (parquet
                     + status.json) under jobs/<job_id>/, survives a restart
-    historical_db.py  SQLite cache backing the `replace` stage (see
+    historical_db.py  Postgres cache backing the `replace` stage (see
                     "Historical override data" above) -- has_data(),
                     load_reference_df(), seed_from_file/seed_from_bytes,
                     stats(), upsert_rows()
