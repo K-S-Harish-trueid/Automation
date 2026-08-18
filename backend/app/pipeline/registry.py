@@ -7,7 +7,7 @@ from .stages.address_fix import stage_address_fix
 from .stages.clean import stage_clean_linebreaks
 from .stages.cms_integration import CMS_UPDATE_COLS
 from .stages.default_id import default_id_invalid_mask, stage_default_id_assign
-from .stages.final_id_check import mask_id_only_invalid, validation_reasons_id_only
+from .stages.final_id_check import final_id_check_invalid_mask, validation_reasons_final_id_check
 from .stages.id_dob_validate import mask_id_dob_invalid, validation_reasons_id_dob
 from .stages.mobile_fill import mask_mobile_missing, validation_reasons_mobile
 from .stages.name_validate import mask_name_invalid, validation_reasons_name
@@ -106,10 +106,14 @@ MANUAL_STAGES = {
         "instructions": "These accounts are missing a mobile number. Fill in PHONE_NUMBER for each.",
     },
     "final_id_check": {
-        "validator": mask_id_only_invalid,
-        "reasons": validation_reasons_id_only,
+        # Post-Haider: format/regex no longer applies here (see
+        # final_id_check_invalid_mask) -- whatever he provided is final.
+        # Only a row he left blank (or the "doc" placeholder) still shows
+        # up for review; anything else falls through untouched to done.
+        "validator": final_id_check_invalid_mask,
+        "reasons": validation_reasons_final_id_check,
         "editable_cols": ["ID_TYPE", "ID_NUMBER"],
         "context_cols": ["ACCOUNT_NUMBER", "ACCOUNT_FIRST_NAME", "ACCOUNT_LAST_NAME"],
-        "instructions": "Final pass on ID_TYPE/ID_NUMBER before any remaining invalid records get an auto-generated default ID.",
+        "instructions": "These accounts still have no ID on file after Haider's response. Fill in ID_TYPE/ID_NUMBER manually, or leave blank to have a Civil ID generated automatically.",
     },
 }

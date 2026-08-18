@@ -93,6 +93,42 @@ def _advance_with_progress(job_id: str):
             )
             break
 
+        if stage["type"] == "confirm":
+            preview_fn = pipeline.CONFIRM_PREVIEW.get(stage["id"])
+            count = preview_fn(df) if preview_fn else 0
+            # Nothing for the operator to actually decide when the preview
+            # count is 0 (e.g. default_id: every account already has a
+            # valid ID after Haider's response, nothing left to generate)
+            # -- running the handler is a no-op in that case anyway, so
+            # skip the click-through gate instead of stopping the job on a
+            # button with nothing behind it. No rollback checkpoint here,
+            # same as any other auto-resolved stage -- there's no real
+            # action to offer undoing.
+            if count == 0:
+                store.set_progress(
+                    job_id, status="processing", current_step_index=idx + 1,
+                    total_steps=total, current_step_name=stage["title"],
+                    percent=round(idx / total * 100),
+                )
+                handler = pipeline.CONFIRM_HANDLERS[stage["id"]]
+                before = df.copy(deep=True)
+                df, summary = handler(df)
+                _append_audit_events(
+                    status, before, df, stage_id=stage["id"], fields=["ID_TYPE", "ID_NUMBER"], label="Generated",
+                    reason="Generated Civil ID assigned after the final ID validation step.",
+                    source_file="System generated", operator="System",
+                )
+                stage["status"] = "done"
+                status["history"].append({
+                    "stage_id": stage["id"], "title": stage["title"], "summary": summary,
+                    "metrics": {"generated_ids": 0},
+                })
+                status["stage_index"] += 1
+                store.set_df(job_id, df)
+                store.persist(job_id)
+                store.set_progress(job_id, percent=round((idx + 1) / total * 100))
+                continue
+
         if stage["type"] == "manual_edit" and BYPASS_MANUAL_EDIT_STAGES:
             store.set_progress(
                 job_id, status="processing", current_step_index=idx + 1,

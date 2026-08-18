@@ -118,10 +118,14 @@ def _reasons_by_row(df: pd.DataFrame, mask: pd.Series, checks: list[tuple[pd.Ser
 
 
 def compute_id_validity(df: pd.DataFrame):
-    """Shared by id_dob_validate, final_id_check, and default_id -- all
-    three need the exact same ID_TYPE/ID_NUMBER rule (id_dob_validate and
-    final_id_check as a validity check, default_id to know which rows still
-    need a generated ID after final_id_check)."""
+    """Full regex-based ID_TYPE/ID_NUMBER validity. Used by id_dob_validate
+    (Stage 1, before Haider's Stage 3 response exists) and, via
+    mask_id_only_invalid, the Stage 1/2 dispatch sheet content and the
+    completion quality-summary stat -- all cases where flagging a format
+    problem is the point. NOT used by final_id_check or default_id anymore
+    (see id_missing_mask below) -- once Haider's response is in, whatever he
+    provided is treated as final regardless of format; only a value he left
+    blank (or the "doc" placeholder) still needs anything done about it."""
     id_type_s = _s(df, "ID_TYPE")
     id_type_l = id_type_s.str.lower()
     id_num_s = _s(df, "ID_NUMBER")
@@ -148,6 +152,37 @@ def compute_id_validity(df: pd.DataFrame):
     num_valid |= is_civil & num_avail
 
     return type_valid, num_valid
+
+
+def id_missing_mask(df: pd.DataFrame) -> pd.Series:
+    """Post-Haider-response definition of "still needs an ID": ID_TYPE or
+    ID_NUMBER left blank, or ID_TYPE is the "doc" placeholder (a known junk
+    value from earlier in the pipeline, not a real Haider answer -- treated
+    the same as blank). Nothing about format/regex -- anything else Haider
+    filled in is accepted as final even if it wouldn't pass
+    compute_id_validity above. Shared by final_id_check.py (the manual-
+    review gate) and default_id.py (which must never overwrite a real,
+    non-blank Haider answer just because it doesn't match the expected
+    format -- the two need to agree on exactly which rows are "missing")."""
+    id_type = _s(df, "ID_TYPE")
+    id_number = _s(df, "ID_NUMBER")
+    type_avail = series_available(id_type)
+    num_avail = series_available(id_number)
+    is_doc = id_type.str.lower().eq("doc")
+    return ~type_avail | ~num_avail | is_doc
+
+
+def id_missing_reason_checks(df: pd.DataFrame) -> list[tuple[pd.Series, str]]:
+    id_type = _s(df, "ID_TYPE")
+    id_number = _s(df, "ID_NUMBER")
+    type_avail = series_available(id_type)
+    num_avail = series_available(id_number)
+    is_doc = id_type.str.lower().eq("doc")
+    return [
+        (is_doc, "ID type 'doc' is not a real ID type -- provide one, or leave blank to auto-generate a Civil ID."),
+        (~type_avail & ~is_doc, "ID type is missing."),
+        (~num_avail, "ID number is missing."),
+    ]
 
 
 def id_reason_checks(df: pd.DataFrame) -> list[tuple[pd.Series, str]]:
