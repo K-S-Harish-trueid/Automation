@@ -82,7 +82,7 @@ def _engine_for(database_url: str) -> Engine:
     return create_engine(database_url, pool_pre_ping=True, future=True)
 
 
-def _get_engine() -> Engine:
+def get_engine() -> Engine:
     """Cached module-level engine for the app's own live store. Seeding
     into a different target (see seed_from_file's database_url param) uses
     _engine_for directly instead, so it never touches this cache."""
@@ -158,7 +158,7 @@ def seed_from_file(path, database_url: str | None = None) -> int:
 
     path = Path(path)
     df = store.read_table(path.read_bytes(), path.name)
-    engine = _engine_for(database_url) if database_url else _get_engine()
+    engine = _engine_for(database_url) if database_url else get_engine()
     return _seed_from_df(df, engine, source="CLI seed")
 
 
@@ -169,7 +169,7 @@ def seed_from_bytes(raw: bytes, filename: str, database_url: str | None = None) 
     from . import store  # local import: avoid a cycle, store imports little from here
 
     df = store.read_table(raw, filename)
-    engine = _engine_for(database_url) if database_url else _get_engine()
+    engine = _engine_for(database_url) if database_url else get_engine()
     return _seed_from_df(df, engine, source="Dashboard")
 
 
@@ -185,7 +185,7 @@ def upsert_rows(df: pd.DataFrame, job_id: str | None = None) -> int:
     rows[JOB_ID_COL] = job_id
     rows[UPDATED_AT_COL] = datetime.now()
 
-    engine = _get_engine()
+    engine = get_engine()
     col_list = ", ".join(f'"{c}"' for c in STORED_COLUMNS)
     col_defs = ", ".join(f'"{c}" TIMESTAMP' if c == UPDATED_AT_COL else f'"{c}" TEXT' for c in STORED_COLUMNS)
     value_list = ", ".join(f":{c}" for c in STORED_COLUMNS)
@@ -208,7 +208,7 @@ def has_data() -> bool:
     called this (matches the old SQLite version's DB_PATH.exists() being a
     cheap, always-safe pre-check)."""
     try:
-        engine = _get_engine()
+        engine = get_engine()
         with engine.connect() as conn:
             exists = conn.execute(
                 text("SELECT 1 FROM information_schema.tables WHERE table_name = :t"), {"t": TABLE},
@@ -227,7 +227,7 @@ def stats() -> dict:
     SSHing in and poking the database."""
     if not has_data():
         return {"seeded": False, "row_count": 0, "seeded_at": None}
-    engine = _get_engine()
+    engine = get_engine()
     with engine.connect() as conn:
         row_count = conn.execute(text(f'SELECT COUNT(*) FROM "{TABLE}"')).scalar()
         try:
@@ -246,7 +246,7 @@ def load_reference_df(account_numbers) -> pd.DataFrame:
     if not numbers:
         return pd.DataFrame(columns=COLUMNS)
 
-    engine = _get_engine()
+    engine = get_engine()
     stmt = text(f'SELECT * FROM "{TABLE}" WHERE "{KEY}" = ANY(:numbers)')
     with engine.connect() as conn:
         chunks = [

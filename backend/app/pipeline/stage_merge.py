@@ -132,6 +132,50 @@ def _normalise_date_opened(resp: pd.DataFrame) -> pd.DataFrame:
     return resp
 
 
+def _add_missing_time_of_day(df: pd.DataFrame, column: str) -> tuple[pd.DataFrame, int]:
+    """Append ' 00:00:00' to any non-blank `column` value that doesn't
+    already carry a time-of-day component -- and leave every other value
+    (blank, or already timestamped) exactly as it is. Purely additive: the
+    date portion itself is never reparsed or reformatted, so there's no
+    risk of misreading an ambiguous date (day-first vs month-first the way
+    a full reparse would have to guess) -- this only checks "does this
+    string already end in something that looks like a time," not "what
+    date is this."
+
+    Shared by both ACCOUNT_HOLDER_DOB and DATE_OPENED at the end of the
+    Stage 3 merge -- either may or may not already carry a time component
+    depending on where the value came from (raw upload, historical
+    override, CMS export, or a hand-typed correction), so this fills in
+    whichever ones are missing it without touching the ones that already
+    have it or reformatting real data along the way."""
+    if column not in df.columns:
+        return df, 0
+    from .toolbox import series_available
+    df = df.copy()
+    values = df[column].astype(str).str.strip()
+    has_time = values.str.contains(r"\d{1,2}:\d{2}", regex=True, na=False)
+    needs_time = series_available(values) & ~has_time
+    df.loc[needs_time, column] = values.loc[needs_time] + " 00:00:00"
+    return df, int(needs_time.sum())
+
+
+def normalise_date_opened_timestamp(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Add a missing time-of-day to DATE_OPENED once Stage 3 is fully
+    merged -- see _add_missing_time_of_day for the actual (purely additive)
+    logic."""
+    return _add_missing_time_of_day(df, "DATE_OPENED")
+
+
+def normalise_dob_timestamp(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Add a missing time-of-day to ACCOUNT_HOLDER_DOB once Stage 3 is
+    fully merged -- see _add_missing_time_of_day for the actual (purely
+    additive) logic. Safe to run on real, actually-collected DOB data
+    (unlike an earlier version of this function that fully reparsed and
+    reformatted every value): nothing here rewrites the date itself, it
+    only appends a time suffix to whichever values are missing one."""
+    return _add_missing_time_of_day(df, "ACCOUNT_HOLDER_DOB")
+
+
 def validate_cms_mobile_response(df_mobile: pd.DataFrame | None):
     """Validate the flat CMS Mobile Numbers dataframe (not a workbook)."""
     if df_mobile is None or df_mobile.empty:

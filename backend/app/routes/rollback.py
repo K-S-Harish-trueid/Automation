@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from .. import store
 from ..background import _run_in_background
-from ..helpers import _current_stage, _require_job
+from ..helpers import _current_stage, _phase_progress, _require_job
 
 router = APIRouter()
 
@@ -31,22 +31,22 @@ def _resume_from_rollback(job_id: str, checkpoint: dict):
     """Return a restored job to its saved gate or rerun its automatic stages."""
     restored = store.get_status(job_id)
     stage = _current_stage(restored)
-    total = len(restored["stages"])
+    step_index, total, percent = _phase_progress(restored, restored["stage_index"])
     if stage is not None and stage["type"] == "auto":
         store.try_begin_processing(job_id)
         store.set_progress(
-            job_id, status="processing", current_step_index=restored["stage_index"],
+            job_id, status="processing", current_step_index=step_index,
             total_steps=total, current_step_name=stage["title"],
-            percent=round(restored["stage_index"] / total * 100),
+            percent=percent,
         )
         _run_in_background(job_id, resolve_gate=lambda: None)
         return {"job_id": job_id, "status": "processing", "restored": checkpoint["label"]}
 
     progress_status = "done" if stage is not None and stage["type"] == "done" else "idle"
     store.set_progress(
-        job_id, status=progress_status, current_step_index=restored["stage_index"],
+        job_id, status=progress_status, current_step_index=step_index,
         total_steps=total, current_step_name=stage["title"] if stage else "Final Output",
-        percent=100 if progress_status == "done" else round(restored["stage_index"] / total * 100),
+        percent=percent,
     )
     return {"job_id": job_id, "status": progress_status, "restored": checkpoint["label"]}
 

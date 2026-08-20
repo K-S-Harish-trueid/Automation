@@ -8,13 +8,14 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from .. import historical_db, pipeline, store
+from .. import generated_records_db, historical_db, pipeline, store
 from ..background import _run_in_background
 from ..helpers import (
     VALIDATION_NOTES,
     _append_audit_events,
     _autofit_worksheet,
     _current_stage,
+    _phase_progress,
     _quality_summary,
     _require_job,
     _upload_metrics,
@@ -176,11 +177,11 @@ async def upload_reference(job_id: str, file: UploadFile = File(...)):
         store.end_processing(job_id)
         raise HTTPException(500, f"The backend could not write a rollback checkpoint: {e}") from e
 
-    total = len(status["stages"])
+    step_index, total, percent = _phase_progress(status, status["stage_index"])
     store.set_progress(
-        job_id, status="processing", current_step_index=status["stage_index"] + 1,
+        job_id, status="processing", current_step_index=step_index,
         total_steps=total, current_step_name=stage["title"],
-        percent=round(status["stage_index"] / total * 100),
+        percent=percent,
     )
 
     def resolve_gate():
@@ -254,11 +255,11 @@ def continue_without_historical(job_id: str):
         store.end_processing(job_id)
         raise HTTPException(500, f"The backend could not write a rollback checkpoint: {e}") from e
 
-    total = len(status["stages"])
+    step_index, total, percent = _phase_progress(status, status["stage_index"])
     store.set_progress(
-        job_id, status="processing", current_step_index=status["stage_index"] + 1,
+        job_id, status="processing", current_step_index=step_index,
         total_steps=total, current_step_name=stage["title"],
-        percent=round(status["stage_index"] / total * 100),
+        percent=percent,
     )
 
     def resolve_gate():
@@ -359,11 +360,11 @@ def _submit_manual_edits(
         store.end_processing(job_id)
         raise HTTPException(500, f"The backend could not write a rollback checkpoint: {e}") from e
 
-    total = len(status["stages"])
+    step_index, total, percent = _phase_progress(status, status["stage_index"])
     store.set_progress(
-        job_id, status="processing", current_step_index=status["stage_index"] + 1,
+        job_id, status="processing", current_step_index=step_index,
         total_steps=total, current_step_name=stage["title"],
-        percent=round(status["stage_index"] / total * 100),
+        percent=percent,
     )
 
     def resolve_gate():
@@ -464,11 +465,11 @@ def confirm_stage(job_id: str):
         store.end_processing(job_id)
         raise HTTPException(500, f"The backend could not write a rollback checkpoint: {e}") from e
 
-    total = len(status["stages"])
+    step_index, total, percent = _phase_progress(status, status["stage_index"])
     store.set_progress(
-        job_id, status="processing", current_step_index=status["stage_index"] + 1,
+        job_id, status="processing", current_step_index=step_index,
         total_steps=total, current_step_name=stage["title"],
-        percent=round(status["stage_index"] / total * 100),
+        percent=percent,
     )
 
     def resolve_gate():
@@ -479,11 +480,12 @@ def confirm_stage(job_id: str):
         handler = pipeline.CONFIRM_HANDLERS[cur["id"]]
         df, summary = handler(df)
         generated_count = int(pipeline.default_id_invalid_mask(before).sum()) if cur["id"] == "default_id" else 0
-        _append_audit_events(
+        events = _append_audit_events(
             st, before, df, stage_id=cur["id"], fields=["ID_TYPE", "ID_NUMBER"], label="Generated",
             reason="Generated Civil ID assigned after the final ID validation step.",
             source_file="System generated", operator="System",
         )
+        generated_records_db.record_generated(job_id, events)
         cur["status"] = "done"
         st["history"].append({
             "stage_id": cur["id"], "title": cur["title"], "summary": summary,

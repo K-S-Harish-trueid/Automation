@@ -1,7 +1,7 @@
 import threading
 
-from . import pipeline, store
-from .helpers import _append_audit_events, _current_stage
+from . import generated_records_db, pipeline, store
+from .helpers import _append_audit_events, _current_stage, _phase_progress
 from .pipeline.registry import HIDDEN_STAGE_IDS
 
 # Toggle: while True, manual_edit stages are auto-advanced by the background
@@ -19,7 +19,6 @@ def _advance_with_progress(job_id: str):
     status = store.get_status(job_id)
     df = store.get_df(job_id)
     stages = status["stages"]
-    total = len(stages)
 
     while status["stage_index"] < len(stages):
         idx = status["stage_index"]
@@ -32,10 +31,11 @@ def _advance_with_progress(job_id: str):
             # stage that isn't in the sidebar. The percent still advances
             # (below, after the handler runs) so progress doesn't stall.
             if stage["id"] not in HIDDEN_STAGE_IDS:
+                step_index, phase_total, percent = _phase_progress(status, idx)
                 store.set_progress(
-                    job_id, status="processing", current_step_index=idx + 1,
-                    total_steps=total, current_step_name=stage["title"],
-                    percent=round(idx / total * 100),
+                    job_id, status="processing", current_step_index=step_index,
+                    total_steps=phase_total, current_step_name=stage["title"],
+                    percent=percent,
                 )
             handler = pipeline.AUTO_HANDLERS[stage["id"]]
             before = df.copy(deep=True)
@@ -73,23 +73,30 @@ def _advance_with_progress(job_id: str):
             # source file -- the audit trail should say so, not attribute the
             # value to whatever the operator originally uploaded.
             source_file = "Historical SQL store" if stage["id"] == "replace" else status.get("filename", "Source file")
-            _append_audit_events(
+            events = _append_audit_events(
                 status, before, df, stage_id=stage["id"], label=label, reason=reason,
                 source_file=source_file, operator="System",
             )
+            if stage["id"] == "address_fix":
+                generated_records_db.record_generated(job_id, events)
             stage["status"] = "done"
             status["history"].append({"stage_id": stage["id"], "title": stage["title"], "summary": summary})
             status["stage_index"] += 1
             store.set_df(job_id, df)
             store.persist(job_id)
-            store.set_progress(job_id, percent=round((idx + 1) / total * 100))
+            _, _, percent = _phase_progress(status, idx + 1)
+            store.set_progress(job_id, percent=percent)
             continue
 
         if stage["type"] == "done":
             stage["status"] = "done"
+            # idx + 1, not idx -- idx still points at the "done" entry itself;
+            # +1 pushes past the end of the stages list, which _phase_progress
+            # treats as "this phase is fully complete" (100%), not "2 of 3".
+            step_index, phase_total, percent = _phase_progress(status, idx + 1)
             store.set_progress(
-                job_id, current_step_index=total, total_steps=total,
-                current_step_name=stage["title"], percent=100,
+                job_id, current_step_index=step_index, total_steps=phase_total,
+                current_step_name=stage["title"], percent=percent,
             )
             break
 
@@ -105,19 +112,26 @@ def _advance_with_progress(job_id: str):
             # same as any other auto-resolved stage -- there's no real
             # action to offer undoing.
             if count == 0:
+                step_index, phase_total, percent = _phase_progress(status, idx)
                 store.set_progress(
-                    job_id, status="processing", current_step_index=idx + 1,
-                    total_steps=total, current_step_name=stage["title"],
-                    percent=round(idx / total * 100),
+                    job_id, status="processing", current_step_index=step_index,
+                    total_steps=phase_total, current_step_name=stage["title"],
+                    percent=percent,
                 )
                 handler = pipeline.CONFIRM_HANDLERS[stage["id"]]
                 before = df.copy(deep=True)
                 df, summary = handler(df)
-                _append_audit_events(
+                events = _append_audit_events(
                     status, before, df, stage_id=stage["id"], fields=["ID_TYPE", "ID_NUMBER"], label="Generated",
                     reason="Generated Civil ID assigned after the final ID validation step.",
                     source_file="System generated", operator="System",
                 )
+                # Always empty here in practice -- this branch only runs when
+                # the preview count was already 0, i.e. nothing to generate --
+                # but calling it keeps this path symmetric with the manual
+                # confirm-click one in routes/stage.py, which is the one that
+                # actually produces events when there's something to generate.
+                generated_records_db.record_generated(job_id, events)
                 stage["status"] = "done"
                 status["history"].append({
                     "stage_id": stage["id"], "title": stage["title"], "summary": summary,
@@ -126,14 +140,16 @@ def _advance_with_progress(job_id: str):
                 status["stage_index"] += 1
                 store.set_df(job_id, df)
                 store.persist(job_id)
-                store.set_progress(job_id, percent=round((idx + 1) / total * 100))
+                _, _, percent = _phase_progress(status, idx + 1)
+                store.set_progress(job_id, percent=percent)
                 continue
 
         if stage["type"] == "manual_edit" and BYPASS_MANUAL_EDIT_STAGES:
+            step_index, phase_total, percent = _phase_progress(status, idx)
             store.set_progress(
-                job_id, status="processing", current_step_index=idx + 1,
-                total_steps=total, current_step_name=stage["title"],
-                percent=round(idx / total * 100),
+                job_id, status="processing", current_step_index=step_index,
+                total_steps=phase_total, current_step_name=stage["title"],
+                percent=percent,
             )
             cfg = pipeline.MANUAL_STAGES[stage["id"]]
             remaining = int(cfg["validator"](df).sum())
@@ -145,7 +161,8 @@ def _advance_with_progress(job_id: str):
             })
             status["stage_index"] += 1
             store.persist(job_id)
-            store.set_progress(job_id, percent=round((idx + 1) / total * 100))
+            _, _, percent = _phase_progress(status, idx + 1)
+            store.set_progress(job_id, percent=percent)
             continue
 
         stage["status"] = "current"
@@ -172,10 +189,11 @@ def _run_in_background(job_id: str, resolve_gate):
             final_stage = _current_stage(final_status)
             final = "done" if (final_stage is None or final_stage["type"] == "done") else "idle"
             if final == "done":
+                step_index, phase_total, percent = _phase_progress(final_status, len(final_status["stages"]))
                 store.set_progress(
-                    job_id, status=final, current_step_index=len(final_status["stages"]),
-                    total_steps=len(final_status["stages"]), current_step_name="Final Output",
-                    percent=100,
+                    job_id, status=final, current_step_index=step_index,
+                    total_steps=phase_total, current_step_name="Final Output",
+                    percent=percent,
                 )
             else:
                 store.set_progress(job_id, status=final)

@@ -33,6 +33,7 @@ from ..background import _run_in_background
 from ..helpers import (
     _append_audit_events,
     _current_stage,
+    _phase_progress,
     _require_job,
     _workbook_summary,
     _write_stage1_haider_xlsx,
@@ -52,9 +53,14 @@ def _read_workbook_sheets(raw: bytes, filename: str) -> dict[str, pd.DataFrame]:
     return {name: df.fillna("") for name, df in sheets.items()}
 
 
-def _begin_gate(job_id: str, status: dict, stage: dict):
+def _begin_gate(job_id: str, status: dict, stage: dict, *, sub_step_label: str | None = None):
     """Same begin_processing -> checkpoint -> set_progress sequence every
-    other gate-resolving route in stage.py uses."""
+    other gate-resolving route in stage.py uses. sub_step_label overrides the
+    displayed step name (still scoped to `stage`'s own phase/total) -- used
+    by resolve_gate below to report which of its several internal phases
+    (CMS mobile, CMS card, Haider's corrections, DOB normalisation) is
+    currently running instead of freezing on the gate's own title for the
+    whole multi-step operation."""
     if not store.try_begin_processing(job_id):
         raise HTTPException(409, "Job is already processing")
     try:
@@ -63,11 +69,23 @@ def _begin_gate(job_id: str, status: dict, stage: dict):
         store.end_processing(job_id)
         raise HTTPException(500, f"The backend could not write a rollback checkpoint: {e}") from e
 
-    total = len(status["stages"])
+    step_index, total, percent = _phase_progress(status, status["stage_index"])
     store.set_progress(
-        job_id, status="processing", current_step_index=status["stage_index"] + 1,
-        total_steps=total, current_step_name=stage["title"],
-        percent=round(status["stage_index"] / total * 100),
+        job_id, status="processing", current_step_index=step_index,
+        total_steps=total, current_step_name=sub_step_label or stage["title"],
+        percent=percent,
+    )
+
+
+def _report_sub_step(job_id: str, status: dict, stage: dict, label: str, sub_step: int, sub_total: int):
+    """Progress update for one internal phase of a multi-part resolve_gate
+    (see apply_haider_response below) -- same scoped total as _begin_gate,
+    but fractional within the current stage instead of jumping straight
+    from start to 100% once the whole gate finishes."""
+    _, total, percent = _phase_progress(status, status["stage_index"], sub_step=sub_step, sub_total=sub_total)
+    store.set_progress(
+        job_id, status="processing", total_steps=total,
+        current_step_name=label, percent=percent,
     )
 
 
@@ -150,10 +168,12 @@ async def apply_naresh_response(job_id: str, file: UploadFile = File(...)):
         before = df.copy(deep=True)
         st = store.get_status(job_id)
         cur = _current_stage(st)
+        _report_sub_step(job_id, st, cur, "Merging Naresh's ID & DOB corrections…", sub_step=1, sub_total=2)
         df, summary, counts = stage_merge.apply_naresh_response(df, sheets)
         remaining_name = int(pipeline.mask_name_invalid(df).sum())
         remaining_id = int(pipeline.mask_id_only_invalid(df).sum())
         remaining_dob = int(pipeline.mask_dob_invalid(df).sum())
+        _report_sub_step(job_id, st, cur, "Verifying remaining Name/ID/DOB issues…", sub_step=2, sub_total=2)
         _append_audit_events(
             st, before, df, stage_id=cur["id"], fields=[*stage_merge.ID_COLS, *stage_merge.DOB_COLS],
             label="Naresh corrected", reason="ID/DOB correction supplied by Naresh (Stage 2 input).",
@@ -242,6 +262,7 @@ async def apply_haider_response(
         cur = _current_stage(st)
 
         # --- 1. Apply CMS Mobile Numbers ---
+        _report_sub_step(job_id, st, cur, "Applying CMS Mobile Numbers…", sub_step=0, sub_total=4)
         before_mobile = df.copy(deep=True)
         df, mobile_summary, mobile_counts = stage_merge.apply_cms_mobile_response(df, df_mobile)
         after_mobile = df.copy(deep=True)
@@ -253,6 +274,7 @@ async def apply_haider_response(
         )
 
         # --- 2. Apply CMS Card Details ---
+        _report_sub_step(job_id, st, cur, "Applying CMS Card Details…", sub_step=1, sub_total=4)
         before_card = after_mobile.copy(deep=True)
         df, card_summary, card_counts = stage_merge.apply_cms_card_response(df, df_card)
         after_card = df.copy(deep=True)
@@ -273,6 +295,7 @@ async def apply_haider_response(
         })
 
         # --- 3. Apply Haider's corrected file ---
+        _report_sub_step(job_id, st, cur, "Applying Haider's corrections…", sub_step=2, sub_total=4)
         before_haider = after_card.copy(deep=True)
         df, haider_summary, haider_counts = stage_merge.apply_haider_corrections_response(df, haider_sheets)
         after_haider = df.copy(deep=True)
@@ -282,6 +305,28 @@ async def apply_haider_response(
             label="Haider corrected", reason="Correction supplied by Haider's response.",
             source_file=haider_filename, operator="Haider",
         )
+
+        # --- 4. Add a missing time-of-day to DOB and DATE_OPENED now that Stage 3 is fully merged ---
+        # Purely additive (see stage_merge._add_missing_time_of_day): only
+        # pads values that don't already carry a time component, whichever
+        # column it is -- real DOB data some accounts already have a
+        # timestamp on is left exactly as-is, same for DATE_OPENED.
+        _report_sub_step(job_id, st, cur, "Adding missing DOB & DATE_OPENED timestamps…", sub_step=3, sub_total=4)
+        before_timestamps = after_haider.copy(deep=True)
+        df, dob_padded_count = stage_merge.normalise_dob_timestamp(df)
+        df, date_opened_padded_count = stage_merge.normalise_date_opened_timestamp(df)
+        after_timestamps = df.copy(deep=True)
+        _append_audit_events(
+            st, before_timestamps, after_timestamps, stage_id=cur["id"],
+            fields=[*stage_merge.DOB_COLS, "DATE_OPENED"],
+            label="System corrected",
+            reason={
+                "ACCOUNT_HOLDER_DOB": "Added a missing 00:00:00 time-of-day component (date itself untouched).",
+                "DATE_OPENED": "Added a missing 00:00:00 time-of-day component (date itself untouched).",
+            },
+            source_file="System generated", operator="System",
+        )
+        _report_sub_step(job_id, st, cur, "Finalizing Stage 3 merge…", sub_step=4, sub_total=4)
 
         cur["status"] = "done"
         st["history"].append({
@@ -306,6 +351,10 @@ async def apply_haider_response(
                      f"{haider_counts['id_matched']} ID, "
                      f"{haider_counts['dob_matched']} DOB account(s) updated"
                  )},
+                {"label": "DOB Timestamp Added",
+                 "detail": f"{dob_padded_count} account(s) had a missing 00:00:00 time-of-day added"},
+                {"label": "DATE_OPENED Timestamp Added",
+                 "detail": f"{date_opened_padded_count} account(s) had a missing 00:00:00 time-of-day added"},
             ],
         })
         st["stage_index"] += 1

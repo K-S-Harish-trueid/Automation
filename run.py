@@ -2,10 +2,11 @@
 """Run the K2 Automation backend (which also serves the frontend at /).
 
 Usage:
-    python run.py [--port 8000] [--host 127.0.0.1] [--reload]
+    python run.py [--port 8000] [--host 0.0.0.0] [--reload]
 """
 import argparse
 import os
+import socket
 import sys
 from pathlib import Path
 
@@ -13,9 +14,21 @@ import uvicorn
 BACKEND_DIR = Path(__file__).resolve().parent / "backend"
 
 
+def get_lan_ip() -> str:
+    """Best-effort LAN IP of this machine (doesn't actually send traffic)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run the K2 Automation server.")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
     parser.add_argument("--reload", action="store_true", help="Auto-restart on code changes")
     parser.add_argument(
@@ -33,6 +46,8 @@ def main():
         os.environ["K2_DEBUG"] = "1"
 
     print(f"K2 Automation starting on http://{args.host}:{args.port}" + (" (debug mode)" if args.debug else ""))
+    if args.host in ("0.0.0.0", "::"):
+        print(f"  -> On this network, other devices can reach it at: http://{get_lan_ip()}:{args.port}")
     uvicorn.run(
         "app.main:app",
         host=args.host,

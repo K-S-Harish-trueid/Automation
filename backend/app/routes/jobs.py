@@ -5,11 +5,12 @@ import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from .. import pipeline, store
+from .. import generated_records_db, store
 from ..background import _run_in_background
 from ..helpers import (
     _autofit_worksheet,
     _current_stage,
+    _phase_progress,
     _public_job_status,
     _require_job,
     _workbook_summary,
@@ -28,9 +29,11 @@ async def create_job(file: UploadFile = File(...)):
         raise HTTPException(400, str(e))
 
     store.try_begin_processing(job_id)
+    status = store.get_status(job_id)
+    step_index, total, percent = _phase_progress(status, status["stage_index"])
     store.set_progress(
-        job_id, status="processing", current_step_index=0,
-        total_steps=len(pipeline.STAGES), current_step_name="Starting…", percent=0,
+        job_id, status="processing", current_step_index=step_index,
+        total_steps=total, current_step_name="Starting…", percent=percent,
     )
     _run_in_background(job_id, resolve_gate=lambda: None)
     return {"job_id": job_id, "status": "processing"}
@@ -79,6 +82,21 @@ def summary_raw_upload(job_id: str):
     return _workbook_summary(path)
 
 
+def _write_and_get_generated_records_path(job_id: str) -> Path:
+    """Freeze this job's generated_records rows (default Civil IDs +
+    auto-filled addresses -- see generated_records_db.py) as a standalone
+    xlsx in the job folder, same freeze-once-reuse-after shape as
+    K2_Data_Audit.xlsx below. Always (re)written together with final.xlsx
+    in _write_and_get_final_path -- see there -- so the two never drift out
+    of sync with each other."""
+    records_df = generated_records_db.fetch_for_job(job_id)
+    out_path = store.JOBS_DIR / job_id / "K2_Generated_Records.xlsx"
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        records_df.to_excel(writer, sheet_name="Sheet1", index=False)
+        _autofit_worksheet(writer.sheets["Sheet1"], records_df)
+    return out_path
+
+
 def _write_and_get_final_path(job_id: str) -> Path:
     status = _require_job(job_id)
     stage = _current_stage(status)
@@ -89,6 +107,7 @@ def _write_and_get_final_path(job_id: str) -> Path:
     out_dir = store.JOBS_DIR / job_id
     out_path = out_dir / "final.xlsx"
     _write_flat_xlsx(df, out_path)
+    _write_and_get_generated_records_path(job_id)
     return out_path
 
 

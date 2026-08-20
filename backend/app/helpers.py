@@ -5,7 +5,7 @@ import pandas as pd
 from fastapi import HTTPException
 from openpyxl.utils import get_column_letter
 
-from . import pipeline, store
+from . import audit_log_db, pipeline, store
 from .pipeline import stage_merge
 from .schemas import EditItem
 
@@ -52,6 +52,41 @@ def _current_stage(status: dict) -> dict | None:
     if live_title:
         stage["title"] = live_title
     return stage
+
+
+def _phase_progress(status: dict, stage_index: int, sub_step: int = 0, sub_total: int = 1) -> tuple[int, int, int]:
+    """(current_step_index, total_steps, percent) scoped to just the phase
+    (registry.py stage entries' "stage": 1/2/3) that `stage_index` belongs
+    to, excluding hidden stages (registry.HIDDEN_STAGE_IDS) -- the single
+    source of truth for every store.set_progress call in the app, so the
+    busy-overlay ring's "Step X/Y" always agrees with what the sidebar's own
+    scoped count (app.js's visibleStageEntries) shows for that phase,
+    instead of counting across all 3 phases combined (that mismatch, plus
+    Stage 2/3 never reporting progress mid-gate, is why the ring used to
+    look stuck/wrong outside Stage 1 -- see git history around this
+    function).
+
+    sub_step/sub_total let one registry stage that actually does several
+    things internally (e.g. Stage 3's stage2_dispatch gate: CMS mobile, CMS
+    card, Haider's corrections, DOB normalisation, all under one entry)
+    report fractional progress through itself instead of jumping straight
+    from start to 100% -- pass e.g. sub_step=2, sub_total=4 partway through."""
+    from .pipeline.registry import HIDDEN_STAGE_IDS
+    stages = status["stages"]
+    done = stage_index >= len(stages)
+    phase = stages[-1]["stage"] if done else stages[stage_index]["stage"]
+    phase_stages = [s for s in stages if s["stage"] == phase and s["id"] not in HIDDEN_STAGE_IDS]
+    total = len(phase_stages) or 1
+    if done:
+        done_before, sub_step, sub_total = total, 0, 1
+    else:
+        done_before = len([
+            s for i, s in enumerate(stages)
+            if i < stage_index and s["stage"] == phase and s["id"] not in HIDDEN_STAGE_IDS
+        ])
+    current_step_index = min(done_before + 1, total)
+    fraction = min((done_before + (sub_step / sub_total)) / total, 1.0)
+    return current_step_index, total, round(fraction * 100)
 
 
 def _require_job(job_id: str) -> dict:
@@ -138,6 +173,10 @@ def _append_audit_events(
                 "label": event_label,
             })
     store.append_audit_events(status["job_id"], events)
+    # Best-effort mirror into Postgres (see audit_log_db.py) -- never raises,
+    # so a Postgres hiccup can't affect the local audit.jsonl write above or
+    # the pipeline step that triggered this call.
+    audit_log_db.record_events(status["job_id"], events)
     return events
 
 
