@@ -8,14 +8,12 @@ from fastapi.responses import FileResponse
 from .. import generated_records_db, store
 from ..background import _run_in_background
 from ..helpers import (
-    _autofit_worksheet,
     _current_stage,
     _phase_progress,
     _public_job_status,
     _require_job,
-    _workbook_summary,
-    _write_flat_xlsx,
 )
+from ..xlsx_export import _autofit_worksheet, _workbook_summary, _write_flat_xlsx
 
 router = APIRouter()
 
