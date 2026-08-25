@@ -1,44 +1,39 @@
-"""In-memory job store with a disk-backed snapshot for crash recovery / download."""
+"""In-memory job store with a disk-backed snapshot for crash recovery /
+download.
+
+Owns the actual per-job state (_JOBS, _PROGRESS, _PROCESSING_JOBS) and the
+core read/write operations on it. Everything else that used to live in this
+file has been split out into its own module, each re-exported here so every
+existing `store.xxx(...)` call site keeps working unchanged:
+  job_paths.py     -- JOBS_DIR, job_id validation, job directory resolution
+  job_audit.py      -- append-only audit.jsonl (append/read/count events)
+  checkpoints.py    -- checkpoint create/list/rollback
+  job_retention.py  -- capacity/retention eviction of old job folders
+See each module's own docstring for why it's separate."""
 import io
 import json
-import os
 import shutil
 import threading
 import time
-import uuid
-from copy import deepcopy
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import pyarrow.parquet as pq
 
-JOBS_DIR = Path(__file__).resolve().parent.parent / "jobs"
-
-
-def _ensure_jobs_dir():
-    """JOBS_DIR is normally created once at import time (below), but if the
-    whole folder gets deleted while the server process is still running,
-    every function that scans it directly (_next_job_id, list_job_summaries,
-    _stored_job_records, enforce_job_retention) needs to recreate it first or
-    JOBS_DIR.iterdir() raises FileNotFoundError."""
-    JOBS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-_ensure_jobs_dir()
-
-def _positive_limit_from_env(name: str, default: int) -> int:
-    try:
-        return max(1, int(os.environ.get(name, default)))
-    except ValueError:
-        return default
-
-
-# Job folders contain KYC data, so the local workspace works as a rolling
-# store. Once it fills up, the oldest non-processing job is removed for the
-# new one. Set K2_MAX_STORED_JOBS to adjust the default capacity.
-MAX_STORED_JOBS = _positive_limit_from_env("K2_MAX_STORED_JOBS", 100)
-MAX_DONE_JOBS = MAX_STORED_JOBS
+from .job_audit import append_audit_events, count_audit_events, read_audit_events  # noqa: F401
+from .job_paths import JOBS_DIR, ensure_jobs_dir as _ensure_jobs_dir, job_dir as _job_dir
+from .job_retention import (  # noqa: F401
+    MAX_DONE_JOBS,
+    enforce_job_capacity,
+    enforce_job_retention,
+    is_done as _is_done,
+)
+from .checkpoints import (  # noqa: F401
+    create_checkpoint,
+    get_rollback_targets,
+    rollback_latest_checkpoint,
+    rollback_to_checkpoint,
+)
 
 _JOBS: dict[str, dict] = {}
 
@@ -93,16 +88,6 @@ def set_progress(job_id: str, **fields):
 def get_progress(job_id: str) -> dict:
     with _PROGRESS_LOCK:
         return dict(_PROGRESS.get(job_id, {"status": "idle"}))
-
-
-def _job_dir(job_id: str) -> Path:
-    d = JOBS_DIR / job_id
-    # parents=True: JOBS_DIR itself is only created once, at import time
-    # (line 18) -- if the whole jobs/ folder gets deleted while the server
-    # process is still running, a plain mkdir(exist_ok=True) here would
-    # raise FileNotFoundError since its parent no longer exists.
-    d.mkdir(parents=True, exist_ok=True)
-    return d
 
 
 def read_table(raw: bytes, filename: str) -> pd.DataFrame:
@@ -188,11 +173,13 @@ def save_raw_upload(job_id: str, raw: bytes, filename: str):
     later stage -- once parsed into a dataframe the original file is
     otherwise gone for good, so this is the only way to hand it back later
     (e.g. from the dashboard's "last generated file" download)."""
+    from pathlib import Path
+
     suffix = Path(filename or "").suffix.lower() or ".csv"
     (_job_dir(job_id) / f"raw_upload{suffix}").write_bytes(raw)
 
 
-def get_raw_upload_path(job_id: str) -> Path | None:
+def get_raw_upload_path(job_id: str):
     matches = list(_job_dir(job_id).glob("raw_upload.*"))
     return matches[0] if matches else None
 
@@ -207,72 +194,23 @@ def set_df(job_id: str, df: pd.DataFrame):
     _JOBS[job_id]["df"] = df
 
 
+def set_status(job_id: str, status: dict):
+    """Replace a job's whole status dict in one go -- used by checkpoints.py
+    on rollback, alongside set_df, instead of that module reaching into
+    _JOBS directly."""
+    _ensure_loaded(job_id)
+    _JOBS[job_id]["status"] = status
+
+
 def get_status(job_id: str) -> dict:
     _ensure_loaded(job_id)
     status = _JOBS[job_id]["status"]
     # Snapshots created before draft support remain readable. Audit events
-    # don't live in this dict at all -- see append_audit_events/
-    # read_audit_events below, they're append-only in their own file.
+    # don't live in this dict at all -- see job_audit.py, they're
+    # append-only in their own file.
     status.setdefault("drafts", {})
     status.setdefault("checkpoints", [])
     return status
-
-
-# ---- Audit log: append-only, kept out of status.json ------------------------
-#
-# A large job can generate hundreds of thousands of field-level audit events
-# (every changed cell on every row, across every stage). Storing that array
-# inside status.json meant every persist() call -- dozens of times per run --
-# rewrote the *entire* growing log from scratch, and every dashboard listing
-# (list_job_summaries, which runs on every /api/jobs page load) had to parse
-# right through it just to read a handful of small fields. Keeping audit in
-# its own append-only file fixes both: new events are appended, not
-# rewritten, and status.json stays small and fast regardless of audit size.
-#
-# This log is never truncated, including on rollback -- a rolled-back
-# checkpoint's audit entries stay on record rather than being silently
-# discarded, so the file is a complete historical record, not a mirror of
-# "what's true about the current data right now." That's a deliberate
-# tradeoff for simplicity/safety over the alternative (checkpoints owning a
-# truncation cursor into a shared file), which is real but sharper -- get a
-# truncation point wrong and you've destroyed audit history, not just kept
-# some extra. Nothing reads this file expecting it to only reflect
-# never-undone changes today, so this doesn't change any current behavior.
-
-def _audit_path(job_id: str) -> Path:
-    return _job_dir(job_id) / "audit.jsonl"
-
-
-def append_audit_events(job_id: str, events: list[dict]) -> None:
-    if not events:
-        return
-    with _audit_path(job_id).open("a", encoding="utf-8") as f:
-        for event in events:
-            f.write(json.dumps(event, separators=(",", ":")))
-            f.write("\n")
-
-
-def read_audit_events(job_id: str) -> list[dict]:
-    path = _audit_path(job_id)
-    if not path.exists():
-        return []
-    events = []
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                events.append(json.loads(line))
-    return events
-
-
-def count_audit_events(job_id: str) -> int:
-    """Line count without parsing each one -- cheap even at hundreds of
-    thousands of events, for callers that only need the number."""
-    path = _audit_path(job_id)
-    if not path.exists():
-        return 0
-    with path.open("rb") as f:
-        return sum(1 for _ in f)
 
 
 def is_processing(job_id: str) -> bool:
@@ -291,111 +229,13 @@ def persist(job_id: str):
     (d / "status.json").write_text(json.dumps(job["status"], separators=(",", ":")), encoding="utf-8")
 
 
-def create_checkpoint(job_id: str, label: str, stage_id: str | None = None) -> dict:
-    """Save the current job state before a user-triggered pipeline action."""
-    _ensure_loaded(job_id)
-    job = _JOBS[job_id]
-    status = get_status(job_id)
-    stage_index = status["stage_index"]
-    stage = status["stages"][stage_index] if stage_index < len(status["stages"]) else {}
-    checkpoint_id = f"cp-{len(status['checkpoints']) + 1:02d}-{uuid.uuid4().hex[:6]}"
-    checkpoint_dir = _job_dir(job_id) / "checkpoints" / checkpoint_id
-    checkpoint_dir.mkdir(parents=True, exist_ok=False)
-
-    job["df"].to_parquet(checkpoint_dir / "working.parquet", index=False)
-    checkpoint_status = deepcopy(status)
-    (checkpoint_dir / "status.json").write_text(
-        json.dumps(checkpoint_status, separators=(",", ":")), encoding="utf-8"
-    )
-    metadata = {
-        "id": checkpoint_id,
-        "label": label,
-        "stage_id": stage_id or stage.get("id", ""),
-        "stage_index": stage_index,
-        "stage_title": stage.get("title", ""),
-    }
-    status["checkpoints"].append(metadata)
-    persist(job_id)
-    return metadata
-
-
-def get_rollback_targets(job_id: str) -> list[dict]:
-    """Return valid checkpoint metadata, including legacy snapshots without stage metadata."""
-    _ensure_loaded(job_id)
-    status = get_status(job_id)
-    targets = []
-    for checkpoint in status.get("checkpoints", []):
-        checkpoint_dir = _job_dir(job_id) / "checkpoints" / checkpoint["id"]
-        status_path = checkpoint_dir / "status.json"
-        data_path = checkpoint_dir / "working.parquet"
-        if not status_path.exists() or not data_path.exists():
-            continue
-        try:
-            snapshot = json.loads(status_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        stage_index = snapshot.get("stage_index")
-        stages = snapshot.get("stages", [])
-        if not isinstance(stage_index, int) or not 0 <= stage_index < len(stages):
-            continue
-        stage = stages[stage_index]
-        targets.append({
-            "id": checkpoint["id"],
-            "label": checkpoint.get("label", "Saved checkpoint"),
-            "stage_id": stage.get("id", checkpoint.get("stage_id", "")),
-            "stage_index": stage_index,
-            "stage_title": stage.get("title", checkpoint.get("stage_title", "")),
-        })
-    return targets
-
-
-def rollback_to_checkpoint(job_id: str, checkpoint_id: str) -> dict:
-    """Restore a selected checkpoint and remove every checkpoint after it."""
-    _ensure_loaded(job_id)
-    status = get_status(job_id)
-    checkpoints = status.get("checkpoints", [])
-    checkpoint_index = next(
-        (index for index, checkpoint in enumerate(checkpoints) if checkpoint.get("id") == checkpoint_id),
-        None,
-    )
-    if checkpoint_index is None:
-        raise ValueError("The selected rollback checkpoint is no longer available")
-
-    metadata = checkpoints[checkpoint_index]
-    checkpoint_dir = _job_dir(job_id) / "checkpoints" / metadata["id"]
-    status_path = checkpoint_dir / "status.json"
-    data_path = checkpoint_dir / "working.parquet"
-    if not status_path.exists() or not data_path.exists():
-        raise ValueError("The latest rollback checkpoint is incomplete")
-
-    restored_status = json.loads(status_path.read_text(encoding="utf-8"))
-    restored_status["job_id"] = job_id
-    # Downstream work was created from the state being replaced, so its
-    # later restore points no longer apply. The audit log is untouched --
-    # it's an append-only historical record (see append_audit_events above),
-    # not part of this snapshot, so rolling back doesn't erase the record of
-    # what happened in the discarded work.
-    restored_status["checkpoints"] = checkpoints[:checkpoint_index]
-    restored_status.setdefault("drafts", {})
-    _JOBS[job_id] = {"df": pd.read_parquet(data_path), "status": restored_status}
-    for discarded in checkpoints[checkpoint_index:]:
-        shutil.rmtree(_job_dir(job_id) / "checkpoints" / discarded["id"], ignore_errors=True)
-    persist(job_id)
-    return metadata
-
-
-def rollback_latest_checkpoint(job_id: str) -> dict:
-    """Restore and consume the latest checkpoint so repeated rollback steps backwards."""
-    _ensure_loaded(job_id)
-    checkpoints = get_status(job_id).get("checkpoints", [])
-    if not checkpoints:
-        raise ValueError("No rollback checkpoint is available for this job")
-    return rollback_to_checkpoint(job_id, checkpoints[-1]["id"])
-
-
 def _ensure_loaded(job_id: str):
     if job_id in _JOBS:
         return
+    from .job_paths import JOB_ID_RE
+
+    if not JOB_ID_RE.match(job_id):
+        raise KeyError(job_id)
     d = JOBS_DIR / job_id
     status_file, data_file = d / "status.json", d / "working.parquet"
     if not status_file.exists() or not data_file.exists():
@@ -408,26 +248,28 @@ def _ensure_loaded(job_id: str):
 def job_exists(job_id: str) -> bool:
     if job_id in _JOBS:
         return True
+    from .job_paths import JOB_ID_RE
+
+    if not JOB_ID_RE.match(job_id):
+        return False
     d = JOBS_DIR / job_id
     return (d / "status.json").exists()
 
 
-def _is_done(status: dict) -> bool:
-    idx = status.get("stage_index", 0)
-    stages = status.get("stages", [])
-    if idx >= len(stages):
-        return True
-    stage = stages[idx]
-    return stage.get("type") == "done" and stage.get("status") == "done"
-
-
 def delete_job(job_id: str):
+    from .job_paths import JOB_ID_RE
+
     _JOBS.pop(job_id, None)
     with _PROGRESS_LOCK:
         _PROGRESS.pop(job_id, None)
     with _PROCESSING_LOCK:
         _PROCESSING_JOBS.discard(job_id)
-    shutil.rmtree(JOBS_DIR / job_id, ignore_errors=True)
+    # Only called internally today (job_retention.enforce_job_capacity/
+    # enforce_job_retention, with job_id straight from a real directory
+    # listing), never from a route -- this check is defense-in-depth for if
+    # that ever changes, not a fix for an active path today.
+    if JOB_ID_RE.match(job_id):
+        shutil.rmtree(JOBS_DIR / job_id, ignore_errors=True)
 
 
 def list_job_summaries(stage_id: str | None = None) -> list[dict]:
@@ -482,65 +324,3 @@ def list_job_summaries(stage_id: str | None = None) -> list[dict]:
         })
     summaries.sort(key=lambda s: s["job_id"], reverse=True)
     return summaries
-
-
-def _stored_job_records() -> list[tuple[float, str]]:
-    _ensure_jobs_dir()
-    records = []
-    for job_dir in JOBS_DIR.iterdir():
-        if not job_dir.is_dir():
-            continue
-        status_file = job_dir / "status.json"
-        if not status_file.exists():
-            continue
-        try:
-            status = json.loads(status_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        created_at = status.get("created_at")
-        if not isinstance(created_at, (int, float)):
-            created_at = status_file.stat().st_ctime
-        records.append((float(created_at), job_dir.name))
-    return records
-
-
-def enforce_job_capacity(
-    max_stored_jobs: int = MAX_STORED_JOBS, *, protected_job_id: str | None = None
-):
-    """Keep a rolling number of job folders, evicting oldest eligible jobs first."""
-    records = _stored_job_records()
-    over_capacity = len(records) - max_stored_jobs
-    if over_capacity <= 0:
-        return
-
-    for _, job_id in sorted(records):
-        if over_capacity <= 0:
-            break
-        if job_id == protected_job_id or is_processing(job_id):
-            continue
-        delete_job(job_id)
-        over_capacity -= 1
-
-
-def enforce_job_retention(max_done_jobs: int = MAX_DONE_JOBS):
-    """Keeps at most `max_done_jobs` completed jobs on disk (and in memory),
-    deleting the oldest ones first. Jobs still waiting on a manual gate are
-    never counted or touched, however many of them exist."""
-    _ensure_jobs_dir()
-    done = []  # (mtime, job_id)
-    for d in JOBS_DIR.iterdir():
-        if not d.is_dir():
-            continue
-        status_file = d / "status.json"
-        if not status_file.exists():
-            continue
-        try:
-            status = json.loads(status_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if _is_done(status):
-            done.append((status_file.stat().st_mtime, d.name))
-
-    done.sort(key=lambda t: t[0], reverse=True)  # newest first
-    for _, job_id in done[max_done_jobs:]:
-        delete_job(job_id)

@@ -17,12 +17,28 @@ Needs a reachable **PostgreSQL** server for the historical-override store
 (see below) — set `DATABASE_URL`, e.g.:
 
 ```
-postgresql+psycopg://postgres:postgres@localhost:5432/k2_historical
+postgresql+psycopg://postgres:1234@localhost:5433/k2_historical
 ```
 
+| part | value | |
+|---|---|---|
+| scheme / driver | `postgresql+psycopg` | SQLAlchemy dialect + driver (psycopg v3) |
+| username | `postgres` | |
+| password | `1234` | throwaway local-dev value -- change for anything beyond local dev |
+| host | `localhost` | |
+| port | `5433` | **not the Postgres standard (5432)** -- specific to the dev machine this default was written on (two Postgres versions installed side by side); a fresh install elsewhere is almost certainly 5432 instead |
+| database name | `k2_historical` | |
+
+Shape: `scheme://username:password@host:port/database_name`.
+
 Falls back to that exact local-dev connection string if `DATABASE_URL` isn't
-set. The target database is created automatically on first connect if it
-doesn't exist yet; you still need Postgres itself installed and running.
+set -- **do not rely on that fallback beyond local dev**: it silently fails
+closed, not loud. A bad/unreachable `DATABASE_URL` doesn't crash the app --
+`historical_db.has_data()` catches every connection error and just reports
+"not seeded," so historical override quietly stops working with no error
+anywhere. Set `DATABASE_URL` explicitly for every real deployment. The
+target database is created automatically on first connect if it doesn't
+exist yet; you still need Postgres itself installed and running.
 
 ## Run
 
@@ -42,8 +58,15 @@ app with a couple of extra conveniences (`--debug` for verbose logging +
 auto-reload + in-browser tracebacks):
 
 ```
-python run.py [--port 8000] [--host 127.0.0.1] [--reload] [--debug]
+python run.py [--port 8000] [--host 0.0.0.0] [--reload] [--debug]
 ```
+
+Defaults to `--host 0.0.0.0`, not `127.0.0.1` — reachable from other devices
+on the same network out of the box, not just `localhost`. Prints the
+machine's LAN IP on startup (e.g. `http://192.168.1.42:8000`) when bound
+that way, so there's something to actually copy for a phone/another laptop
+on the same network. See the **Security note** below before relying on
+that for anything beyond local-network testing.
 
 ### Try it with dummy data
 
@@ -113,7 +136,7 @@ data stays — two things need to change:
 2. **Backend CORS**: once the frontend is on a different origin, restrict
    which origin(s) may call the API instead of the wide-open default:
    ```
-   K2_ALLOWED_ORIGINS=https://your-frontend.example.com "d:\K2 Automation\k2\Scripts\python.exe" -m uvicorn app.main:app --port 8000 --host 0.0.0.0
+   K2_ALLOWED_ORIGINS=https://your-frontend.example.com
    ```
    (Comma-separate multiple origins. Omit the env var to leave it wide open,
    which is fine for local-network testing but not once anything public can
@@ -127,6 +150,31 @@ from the internet (port-forwarded, tunneled, deployed to a cloud VM, etc.) it
 needs an auth layer (API key header at minimum) before that happens — worth
 flagging before you expose it beyond your own machine/network.
 
+## Environment variables
+
+Copy `.env.example` (project root) to `.env` and edit values there — `.env`
+is gitignored, real values never get committed. Every var is optional;
+anything left out (or the whole file missing) falls back to the exact
+default already hardcoded in the app, so an absent `.env` changes nothing.
+17 vars total:
+
+- 12 are business-rule thresholds (DOB cutoff, age of majority, ID format
+  regexes, etc.) -- see `app/rules_config.py` for the full explanation of
+  each one.
+- `DATABASE_URL` -- see "Setup" above for the full breakdown.
+- `K2_DEBUG`, `K2_ALLOWED_ORIGINS` -- see `app/main.py`.
+- `K2_OPERATOR_NAME` -- see `app/routes/stage.py` (attributed on manual-edit
+  audit events).
+- `K2_MAX_STORED_JOBS` -- see "Job retention" below. Read from
+  `app/rules_config.py` (not `store.py` directly) specifically so it's
+  guaranteed to see `.env` -- `.env` is loaded as an import-time side effect
+  of `rules_config.py` itself, and `store.py` used to get imported earlier
+  in `main.py`'s startup than anything that triggered that load, so a value
+  set only in `.env` was silently never picked up. Fixed 2026-08-24.
+
+`.env.example` is intentionally just plain `KEY=value` lines, no comments --
+this section plus each file's own docstring is the explanation.
+
 ## Project layout
 
 ```
@@ -138,13 +186,54 @@ backend/
     background.py   Runs the auto-stage chain in a background thread after
                     each action endpoint returns
     store.py        Per-job state: in-memory dict + a disk snapshot (parquet
-                    + status.json) under jobs/<job_id>/, survives a restart
+                    + status.json) under jobs/<job_id>/, survives a restart.
+                    Split into four smaller modules below (2026-08-25) --
+                    store.py itself now just owns the in-memory dict and the
+                    core read/write ops, and re-exports the rest so every
+                    existing `store.xxx(...)` call site is unaffected
+    job_paths.py    JOBS_DIR, job_id validation regex, job directory
+                    resolution -- split out of store.py so job_audit.py/
+                    checkpoints.py/job_retention.py don't need to import
+                    store.py itself (store.py imports from all three, so
+                    that would be circular)
+    job_audit.py    The append-only per-job audit.jsonl -- append/read/count
+                    events (split out of store.py)
+    checkpoints.py  Checkpoint create/list/rollback (split out of store.py) --
+                    works entirely through store.py's own public functions
+                    (get_df/get_status/set_df/set_status/persist) rather
+                    than reaching into its private in-memory job dict
+    job_retention.py  Capacity/retention eviction of old job folders (split
+                    out of store.py) -- see "Job retention" below
     historical_db.py  Postgres cache backing the `replace` stage (see
                     "Historical override data" above) -- has_data(),
                     load_reference_df(), seed_from_file/seed_from_bytes,
-                    stats(), upsert_rows()
-    helpers.py       Cross-cutting glue: audit-event recording, quality
-                    summary, xlsx export writers
+                    stats(), upsert_rows(), get_engine() (shared connection,
+                    also used by audit_log_db.py/generated_records_db.py/
+                    address_pools_db.py below)
+    helpers.py       Cross-cutting glue: stage navigation/progress,
+                    audit-event recording, quality summary, edit validation
+    xlsx_export.py   Every xlsx read/write in the app: the Stage 1/2
+                    dispatch-file writers, the final flat output, the
+                    sheet/row-count summary shown under every download
+                    button (split out of helpers.py, which used to hold
+                    this alongside unrelated concerns)
+    audit_log_db.py  Best-effort Postgres mirror of every job's local
+                    audit.jsonl, queryable across all jobs at once (table
+                    `audit_log`) -- local audit.jsonl stays the source of
+                    truth the app itself depends on; this is a convenience
+                    mirror only, never blocks a job if Postgres is down
+    generated_records_db.py  Append-only Postgres log (table
+                    `generated_records`) of every fabricated Civil ID
+                    (default_id stage) and auto-filled address (address_fix
+                    stage), tagged with the job that generated it
+    address_pools_db.py  The `address_fix` stage's denylist + per-province
+                    replacement-address pool (tables `address_denylist`/
+                    `address_pool`) -- used to be hardcoded in
+                    pipeline/stages/address_fix.py, now editable directly in
+                    Postgres (pgAdmin or any SQL client), no code change or
+                    redeploy needed for a new entry. Cached in memory with a
+                    60s TTL; degrades to empty results (never fails a job)
+                    if Postgres is unreachable
     pipeline/       Stage logic ported from clean.py / replace.py / cmsdata.py /
                     idvalid.py / dobvalid.py / pah3.py / mobileupd.py, one file
                     per pipeline stage -- see below
@@ -156,10 +245,15 @@ backend/
                     upload/merge shape (three files at once for Stage 3,
                     blank-means-no-change merges) differs from the generic
                     upload-stage gate.
-  data/             historical.db + the two scripts that build it
-                    (seed_historical.py, create_xlsx_2_db.py) -- gitignored
-                    except those two scripts, see "Historical override data"
-                    above
+  data/             historical.db + the scripts that build/seed it
+                    (seed_historical.py, create_xlsx_2_db.py,
+                    migrate_address_pools.py) -- gitignored except those
+                    scripts, see "Historical override data" above.
+                    migrate_address_pools.py is one-time: it ports the
+                    original hardcoded address denylist/pool into Postgres
+                    for a brand-new database -- safe to re-run (replaces
+                    both tables wholesale) but only needed once per fresh
+                    Postgres instance; after that, edit the tables directly
   jobs/             Runtime data, one folder per job (gitignored, safe to delete when idle)
   requirements.txt
 ```

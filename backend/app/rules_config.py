@@ -47,6 +47,22 @@ def _env_list(name: str, default_csv: str) -> list[str]:
     return [item.strip().lower() for item in raw.split(",") if item.strip()]
 
 
+def _env_positive_int(name: str, default: int) -> int:
+    """Like _env_int, but never crashes the app on a malformed value --
+    falls back to `default` on a parse error and clamps below 1 up to 1.
+    Used for operational capacity settings (MAX_STORED_JOBS) where a typo'd
+    env value shouldn't be able to take the whole app down at import time,
+    unlike the business-rule values above where a bad value getting through
+    silently is the bigger risk."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
 # ── Tier 1: clean scalars ────────────────────────────────────────────────
 
 # id_dob_validate.py: any DOB on/before this date is treated as a
@@ -94,3 +110,14 @@ EXTRA_EMPTY_PLACEHOLDER_VALUES = _env_list("EXTRA_EMPTY_PLACEHOLDER_VALUES", "0,
 # digits, zero-padded (default "00" + 6 digits = 8 characters total).
 GENERATED_ID_PREFIX = _env_str("GENERATED_ID_PREFIX", "00")
 GENERATED_ID_RANDOM_DIGITS = _env_int("GENERATED_ID_RANDOM_DIGITS", 6)
+
+# store.py: rolling cap on how many completed job folders are kept on disk
+# (job folders contain KYC data) before the oldest non-processing one is
+# pruned to make room for a new one. Moved here from store.py itself --
+# that module gets imported before anything triggers this file's
+# load_dotenv() call (main.py imports store before routes.handoff, which
+# is what actually loads .env), so a value set only in .env was silently
+# never picked up. Importing it from here instead guarantees .env is
+# already loaded, since this module loads it itself, in its own file,
+# before any other top-level statement here runs.
+MAX_STORED_JOBS = _env_positive_int("K2_MAX_STORED_JOBS", 100)
