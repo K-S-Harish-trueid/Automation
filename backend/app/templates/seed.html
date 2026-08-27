@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>K2 Seed Data</title>
+<link rel="stylesheet" href="style.css" />
+<script src="config.js"></script>
+<style>
+  /* Not a full app shell (no sidebar, no JS-driven layout) -- just the
+     shared stylesheet's tokens/components on a plain centered page. See
+     backend/README.md's "Stage Tester" note for the same reasoning behind
+     stage_test.html being its own standalone page. */
+  body {
+    background: var(--canvas);
+    color: var(--text);
+    font-family: var(--font-body);
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 32px 20px 60px;
+  }
+  a.back { font-size: 13px; text-decoration: none; color: var(--accent); }
+  h1 { font-size: 20px; margin: 8px 0 4px; color: var(--text); }
+  p.sub { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
+
+  /* Scoped-down sizing for this standalone page only -- these classes are
+     shared with the main app's dashboard, so overrides live here rather
+     than in style.css itself. Two panels stacked at the dashboard's own
+     size runs long enough to need scrolling for no reason on a page this
+     narrow; this fits both without it on a normal screen. */
+  .audit-preview { margin-top: 10px; }
+  .audit-preview summary { padding: 10px 14px; font-size: 12px; }
+  .historical-panel-body { padding: 0 14px 14px; }
+  .historical-panel-body .muted { font-size: 12px; margin: 10px 0; }
+  .dropzone { min-height: 0; margin: 10px 0; padding: 10px 14px; gap: 12px; }
+  .file-picker-icon { width: 28px; height: 28px; }
+  .file-picker-icon .ui-icon { width: 16px; height: 16px; }
+  .file-picker-trigger { font-size: 13px; }
+  .file-picker-note { font-size: 11px; }
+  .row-actions { margin-top: 8px !important; }
+</style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Back to K2 Automation</a>
+  <h1>Seed Data</h1>
+  <p class="sub">Reload reference data into Postgres from an xlsx export. Replaces the target table(s) entirely -- not a merge.</p>
+
+  <details class="audit-preview" open>
+    <summary><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg><span>Historical reference data</span></summary>
+    <div class="historical-panel-body">
+      <p class="muted" id="historicalStatusLine">Checking historical.db…</p>
+      <div class="upload-simple-layout">
+        <label class="dropzone" id="historicalFileZone" for="historicalFileInput">
+          <input class="file-input" type="file" id="historicalFileInput" accept=".csv,.xlsx,.xls" />
+          <span class="file-picker-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg></span>
+          <span class="dropzone-content">
+            <span class="file-picker-trigger">Select xlsx/csv</span>
+            <span class="file-picker-note">Replaces the entire historical store -- same as seed_historical.py</span>
+            <span class="file-name" id="historicalFileName">No file selected</span>
+          </span>
+        </label>
+      </div>
+      <div class="row-actions">
+        <button class="secondary quiet-action" id="seedHistoricalBtn" type="button"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg><span>Seed historical data</span></button>
+      </div>
+    </div>
+  </details>
+
+  <details class="audit-preview">
+    <summary><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg><span>Address pools</span></summary>
+    <div class="historical-panel-body">
+      <p class="muted" id="statusLine">Checking address pools…</p>
+      <div class="upload-simple-layout">
+        <label class="dropzone" id="poolsFileZone" for="poolsFileInput">
+          <input class="file-input" type="file" id="poolsFileInput" accept=".xlsx,.xls" />
+          <span class="file-picker-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg></span>
+          <span class="dropzone-content">
+            <span class="file-picker-trigger">Select xlsx</span>
+            <span class="file-picker-note">Replaces address_denylist + address_pool entirely -- sheets named "address_denylist" (value) and "address_pool" (province, address)</span>
+            <span class="file-name" id="poolsFileName">No file selected</span>
+          </span>
+        </label>
+      </div>
+      <div class="row-actions">
+        <button class="secondary quiet-action" id="seedPoolsBtn" type="button"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg><span>Seed address pools</span></button>
+      </div>
+    </div>
+  </details>
+
+<script>
+const API_BASE = window.K2_API_BASE || "/api";
+
+// Accordion: opening one panel collapses the others, so having both loaded
+// doesn't force scrolling to see either one's action button.
+const allPanels = document.querySelectorAll("details.audit-preview");
+allPanels.forEach((panel) => {
+  panel.addEventListener("toggle", () => {
+    if (!panel.open) return;
+    allPanels.forEach((other) => { if (other !== panel) other.open = false; });
+  });
+});
+
+const statusLine = document.getElementById("statusLine");
+const fileInput = document.getElementById("poolsFileInput");
+const fileZone = document.getElementById("poolsFileZone");
+const fileName = document.getElementById("poolsFileName");
+const seedBtn = document.getElementById("seedPoolsBtn");
+
+function formatStatus(status) {
+  if (!status || !status.seeded) {
+    return "Not seeded -- address_fix will leave unmapped-province rows invalid until this is loaded.";
+  }
+  const denylist = (status.denylist_count || 0).toLocaleString();
+  const pool = (status.pool_count || 0).toLocaleString();
+  const updated = status.seeded_at ? new Date(status.seeded_at).toLocaleString() : "unknown time";
+  return `Seeded: ${denylist} denylist value(s), ${pool} pool entry(ies), last updated ${updated}.`;
+}
+
+async function loadStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/seed/status`);
+    statusLine.textContent = formatStatus(await res.json());
+  } catch (err) {
+    statusLine.textContent = `Could not check status: ${err.message}`;
+  }
+}
+
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files[0];
+  fileName.textContent = file ? `${file.name} - ${(file.size / 1024).toFixed(0)} KB` : "No file selected";
+  fileZone.classList.toggle("file-selected", Boolean(file));
+});
+["dragenter", "dragover"].forEach((eventName) => {
+  fileZone.addEventListener(eventName, (event) => { event.preventDefault(); fileZone.classList.add("drag-over"); });
+});
+["dragleave", "drop"].forEach((eventName) => {
+  fileZone.addEventListener(eventName, (event) => { event.preventDefault(); fileZone.classList.remove("drag-over"); });
+});
+
+seedBtn.addEventListener("click", async () => {
+  const file = fileInput.files[0];
+  if (!file) { alert("Select a file first."); return; }
+  seedBtn.disabled = true;
+  statusLine.textContent = "Seeding…";
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`${API_BASE}/seed/address-pools`, { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+    statusLine.textContent = formatStatus(data);
+  } catch (err) {
+    statusLine.textContent = `Failed: ${err.message}`;
+  } finally {
+    seedBtn.disabled = false;
+  }
+});
+
+loadStatus();
+
+// Historical reference data -- same two endpoints and status wording as
+// the dashboard's panel (app.js's historicalSeedPanelMarkup/formatHistoricalStatus),
+// just wired independently here since this is a standalone page.
+const historicalStatusLine = document.getElementById("historicalStatusLine");
+const historicalFileInput = document.getElementById("historicalFileInput");
+const historicalFileZone = document.getElementById("historicalFileZone");
+const historicalFileName = document.getElementById("historicalFileName");
+const seedHistoricalBtn = document.getElementById("seedHistoricalBtn");
+
+function formatHistoricalStatus(status) {
+  if (!status || !status.seeded) {
+    return "Not seeded -- the historical override stage will run with a warning and no accounts updated until this is loaded.";
+  }
+  const rows = (status.row_count || 0).toLocaleString();
+  const updated = status.seeded_at ? new Date(status.seeded_at).toLocaleString() : "unknown time";
+  return `Seeded: ${rows} row(s), last updated ${updated}.`;
+}
+
+async function loadHistoricalStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/historical/status`);
+    historicalStatusLine.textContent = formatHistoricalStatus(await res.json());
+  } catch (err) {
+    historicalStatusLine.textContent = `Could not check status: ${err.message}`;
+  }
+}
+
+historicalFileInput.addEventListener("change", () => {
+  const file = historicalFileInput.files[0];
+  historicalFileName.textContent = file ? `${file.name} - ${(file.size / 1024).toFixed(0)} KB` : "No file selected";
+  historicalFileZone.classList.toggle("file-selected", Boolean(file));
+});
+["dragenter", "dragover"].forEach((eventName) => {
+  historicalFileZone.addEventListener(eventName, (event) => { event.preventDefault(); historicalFileZone.classList.add("drag-over"); });
+});
+["dragleave", "drop"].forEach((eventName) => {
+  historicalFileZone.addEventListener(eventName, (event) => { event.preventDefault(); historicalFileZone.classList.remove("drag-over"); });
+});
+
+seedHistoricalBtn.addEventListener("click", async () => {
+  const file = historicalFileInput.files[0];
+  if (!file) { alert("Select a file first."); return; }
+  seedHistoricalBtn.disabled = true;
+  historicalStatusLine.textContent = "Seeding… (can take a minute or more for a large export)";
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`${API_BASE}/historical/seed`, { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+    historicalStatusLine.textContent = formatHistoricalStatus(data);
+  } catch (err) {
+    historicalStatusLine.textContent = `Failed: ${err.message}`;
+  } finally {
+    seedHistoricalBtn.disabled = false;
+  }
+});
+
+loadHistoricalStatus();
+</script>
+</body>
+</html>
