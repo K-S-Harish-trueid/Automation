@@ -64,6 +64,10 @@ _RULES_PANELS = {
             "Missing or a placeholder value",
             "No letters at all in any script -- e.g. a phone number, coordinates, \"-\"",
             "Exact match on a known-junk list (e.g. \"JUNE\", \"A\")",
+            "Contains a digit run starting with 3+ zeros (e.g. \"000000\") -- a real place "
+            "name with junk numbers glued on",
+            "Contains a run of 7+ consecutive digits anywhere -- almost always a phone "
+            "number pasted into the field",
         ],
         "note": "If invalid: \"outside the country\" or city 00000 → Baghdad pool + city/province "
                 "reset to Baghdad. Real city with a mapped province → that province's own pool, "

@@ -1,7 +1,14 @@
 import pandas as pd
 
 from ... import address_pools_db
-from ..toolbox import _s, balanced_assign, series_available, series_has_letter
+from ..toolbox import (
+    _s,
+    balanced_assign,
+    series_available,
+    series_has_leading_zero_run,
+    series_has_letter,
+    series_has_long_digit_run,
+)
 
 
 def mask_address_invalid(df: pd.DataFrame) -> pd.Series:
@@ -16,7 +23,16 @@ def mask_address_invalid(df: pd.DataFrame) -> pd.Series:
     # comes from Postgres (address_pools_db.py), not a hardcoded set --
     # editable directly in the database, no code change/redeploy needed.
     known_bad = address.str.lower().isin(address_pools_db.load_denylist())
-    return missing | no_letters | known_bad
+    # Catches a real place name with junk numbers glued on -- has_letter
+    # and known_bad above both miss this, since the string genuinely
+    # contains letters and isn't an exact denylist match. See
+    # series_has_leading_zero_run/series_has_long_digit_run's own
+    # docstrings for exactly what each catches and why (in particular: the
+    # zero-run check deliberately requires the zeros to LEAD the digit run,
+    # not just appear in it, to avoid flagging a real Iraqi postal code).
+    leading_zero_run = series_has_leading_zero_run(address, min_zeros=3)
+    long_digit_run = series_has_long_digit_run(address, min_len=7)
+    return missing | no_letters | known_bad | leading_zero_run | long_digit_run
 
 
 def stage_address_fix(df: pd.DataFrame, **_):

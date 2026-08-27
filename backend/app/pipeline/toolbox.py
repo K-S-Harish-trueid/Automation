@@ -2,6 +2,8 @@
 stage, it belongs in that stage's own file under stages/, not here -- keep
 this file small so "do I need to open the toolbox?" stays a rare question.
 """
+import re
+
 import pandas as pd
 
 from ..rules_config import (
@@ -18,20 +20,38 @@ NOT_COLLECTED = NOT_COLLECTED_PLACEHOLDER
 
 # "" is always empty regardless of config; NOT_COLLECTED is folded in here
 # (lowercased) so the two settings can never drift out of sync with each
-# other.
-PLACEHOLDERS = {"", NOT_COLLECTED.lower(), *EXTRA_EMPTY_PLACEHOLDER_VALUES}
+# other. "nan"/"none"/"nat" are always included too, unconditionally (not
+# left to EXTRA_EMPTY_PLACEHOLDER_VALUES) -- those are Python/pandas' own
+# text spellings of "no value" (str(None), str(float("nan")), str(pd.NaT)),
+# not a business rule an operator should be able to accidentally unset via
+# .env. Data sources are expected to clean their own NaNs before handing a
+# dataframe to the pipeline (see historical_db.load_reference_df's
+# .fillna("")) -- this is a second line of defense, not the fix itself.
+PLACEHOLDERS = {"", "nan", "none", "nat", NOT_COLLECTED.lower(), *EXTRA_EMPTY_PLACEHOLDER_VALUES}
 
 
 def _s(df: pd.DataFrame, col: str) -> pd.Series:
     if col not in df.columns:
         return pd.Series([""] * len(df), index=df.index)
-    return df[col].astype(str).str.strip()
+    # fillna BEFORE astype(str): a genuinely-missing (NaN/None) cell doesn't
+    # reliably turn into the text "nan" here -- pandas' current default
+    # string dtype (as of pandas 3.0) preserves it as an actual missing
+    # value straight through .astype(str).str.strip(), not a "nan" string.
+    # Flattening it to "" first, on the raw column, is what actually closes
+    # that gap for every one of this helper's many callers.
+    return df[col].fillna("").astype(str).str.strip()
 
 
 def series_available(s: pd.Series) -> pd.Series:
+    # Checked on the raw input, before stringifying -- same reasoning as
+    # _s() above. Several callers (address_fix.py, id_dob_validate.py,
+    # toolbox.py's own ID-availability checks) pass a raw df column
+    # straight in, not _s()'s already-cleaned output, so this can't assume
+    # the NaN has already been flattened to "" upstream.
+    missing = s.isna()
     ss = s.astype(str).str.strip()
     ll = ss.str.lower()
-    return (~ss.eq("")) & (~ll.isin(PLACEHOLDERS))
+    return (~missing) & (~ss.eq("")) & (~ll.isin(PLACEHOLDERS))
 
 
 def series_has_letter(s: pd.Series) -> pd.Series:
@@ -43,6 +63,41 @@ def series_has_letter(s: pd.Series) -> pd.Series:
     letters in Arabic addresses entirely), while .astype(object) + isalpha()
     matches Python's real Unicode behavior."""
     return s.astype(str).map(lambda value: any(ch.isalpha() for ch in value))
+
+
+_DIGIT_RUN_RE = re.compile(r"[0-9]+")
+
+
+def series_has_leading_zero_run(s: pd.Series, min_zeros: int = 3) -> pd.Series:
+    """True where the value contains a digit run that itself STARTS with
+    at least `min_zeros` consecutive zeros (e.g. "000000", "00000...") --
+    catches padded/junk numeric values glued onto an otherwise real
+    address (rules/06-address_fix.txt's added Rule 1). ASCII digits only
+    ([0-9], not \\d -- \\d also matches Arabic-Indic digit characters);
+    every real example seen so far uses Western digits even inside Arabic
+    text. Same per-value .map() approach as series_has_letter, for the
+    same reason: no vectorized pandas regex on this data.
+
+    Deliberately "starts with", not "contains 3+ zeros anywhere" -- a real
+    Iraqi postal code (e.g. "10001", "20005") can contain 3 consecutive
+    zeros in the middle without being junk; requiring the zeros to lead
+    the run avoids flagging those. Known, accepted tradeoff: a short
+    trailing-zero value glued onto an address (e.g. "...4000", "...6000")
+    is NOT caught by this rule since its zeros trail rather than lead --
+    catching those was considered and rejected in favor of not risking
+    real postal codes."""
+    prefix = "0" * min_zeros
+    return s.astype(str).map(lambda value: any(run.startswith(prefix) for run in _DIGIT_RUN_RE.findall(value)))
+
+
+def series_has_long_digit_run(s: pd.Series, min_len: int = 7) -> pd.Series:
+    """True where the value contains a run of `min_len`+ consecutive
+    digits anywhere (rules/06-address_fix.txt's added Rule 2) -- a real
+    Iraqi address's house number (1-4 digits) or postal code (5 digits)
+    never gets this long, so a run this long is essentially always a
+    phone number or other corrupted numeric data pasted into the address
+    field."""
+    return s.astype(str).map(lambda value: any(len(run) >= min_len for run in _DIGIT_RUN_RE.findall(value)))
 
 
 def balanced_assign(n_rows: int, options: list[str], seed: int = 42) -> list[str]:

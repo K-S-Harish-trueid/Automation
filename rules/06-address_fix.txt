@@ -34,9 +34,31 @@ mask_address_invalid; a row trips this if ANY is true)
      INVALID_ADDRESSES denylist. Exact match only -- "JUNE residency ext"
      does NOT match "JUNE" and is treated as a normal address, same as the
      legacy script.
+  4. LEADING ZERO RUN -- contains a digit run that itself STARTS with 3+
+     consecutive zeros (e.g. "000000", "00000...") -- catches a real place
+     name with junk numbers glued on, e.g. "رزكاري 000000". Rules 2/3 both
+     miss this: the string has letters (rule 2 doesn't fire) and isn't an
+     exact denylist match (rule 3 doesn't fire). Checked with
+     series_has_leading_zero_run() -- deliberately "starts with", not
+     "contains 3+ zeros anywhere": a real Iraqi postal code (e.g. "10001",
+     "20005") can contain 3 consecutive zeros in the middle without being
+     junk, so requiring the zeros to LEAD the run avoids flagging those.
+     Known, accepted tradeoff: a short trailing-zero value glued onto an
+     address (e.g. "...4000", "...6000") is NOT caught by this rule since
+     its zeros trail rather than lead -- catching those was considered and
+     rejected in favor of not risking real postal codes.
+  5. LONG DIGIT RUN -- contains a run of 7+ consecutive digits anywhere,
+     e.g. "بغداد/.../07761789000". A real Iraqi house number (1-4 digits)
+     or postal code (5 digits) never gets this long, so a run this long is
+     essentially always a phone number or other corrupted numeric data
+     pasted into the address field. Checked with series_has_long_digit_run().
+Rules 4 and 5 both use ASCII digits ([0-9]) only, not \d -- \d also
+matches Arabic-Indic digit characters, and every real example seen so far
+uses Western digits even inside Arabic text.
 This is broader than the legacy script, which ONLY did check 3 (a plain
-`.isin()` against its denylist) -- checks 1 and 2 catch real junk that
-isn't literally in that fixed list (e.g. any other digits-only string).
+`.isin()` against its denylist) -- checks 1, 2, 4, and 5 catch real junk
+that isn't literally in that fixed list (e.g. any other digits-only
+string, or a real address with a phone number glued onto it).
 
 CONSTRAINTS -- applied in this order, each recomputing "still invalid"
 against the previous case's results before running
