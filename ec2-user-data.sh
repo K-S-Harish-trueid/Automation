@@ -1,5 +1,18 @@
 #!/bin/bash
 set -e
+
+# 4GB swap -- without this, a large historical-data seed upload
+# (Historical_Dataset.xlsx, ~800k rows) reliably OOM-kills the app on a
+# small instance (t3.small's 2GB RAM isn't enough for the in-memory
+# xlsx-parse + bulk-insert). Swap doesn't make it fast, but it's the
+# difference between "slow" and "the whole service getting killed and
+# restarted mid-request". See AWS_DEPLOYMENT.md for the full story.
+fallocate -l 4G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
 apt update -y
 apt install -y python3-pip python3-venv git nginx postgresql postgresql-contrib
 
