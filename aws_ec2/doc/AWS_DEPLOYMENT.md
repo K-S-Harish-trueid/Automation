@@ -109,6 +109,37 @@ port 5432.)
 10. Set up backups — no RDS means no automatic ones. Simplest: a nightly cron running `pg_dump` (optionally synced to S3). Not yet set up — revisit.
 11. Watch disk usage (`df -h`) over time — Postgres data, WAL, and the app's `jobs/` output all now share the same 15GB volume that used to be sized for the app alone. Resize the EBS volume (non-destructive, done live) if it fills up.
 
+## HTTPS — stopgap self-signed cert (no domain/Elastic IP yet)
+
+Without a domain, real HTTPS (Let's Encrypt/certbot) isn't possible — certs
+are issued for domain names, not IPs. Browsers were also starting to block
+downloads over plain HTTP as "not securely downloaded," which is what
+prompted this. Stopgap until there's a real domain (see "Remaining steps"):
+
+- `/usr/local/bin/regen-self-signed-cert.sh` generates a self-signed cert
+  bound to whatever the instance's *current* public IP is, using the EC2
+  metadata service (IMDSv2 — needs the token dance, plain `curl` to the
+  metadata endpoint fails silently otherwise).
+- `regen-cert.service` (systemd, enabled) runs that script on every boot,
+  so the cert automatically re-matches a new IP after every stop/start —
+  otherwise the cert would go stale (wrong IP) the moment the instance
+  restarts, same problem that hit SSH/pgAdmin/DNS all session.
+- Nginx serves both `:80` (plain) and `:443` (this self-signed cert).
+- **Every visitor's browser shows a "Not Secure" / certificate-warning
+  interstitial once** (self-signed ≠ CA-trusted) — expected, click through
+  ("Advanced → Proceed"). The connection is still genuinely TLS-encrypted
+  underneath, which is what actually stops the browser's insecure-download
+  blocking; the warning is just about the certificate's *issuer* not being
+  trusted, not about the encryption itself.
+- Both the script and the systemd unit are baked into `ec2-user-data.sh`,
+  so a fresh launch gets this automatically.
+- **Alternative that has none of this friction, if only one person needs
+  it at a time**: an SSH tunnel (`ssh -L 8080:localhost:80 ubuntu@<ip>`,
+  then browse `http://localhost:8080`) — browsers treat `localhost` as a
+  secure context regardless of the server's actual HTTP/HTTPS state or IP,
+  so it sidesteps this whole problem for whoever's tunneling, with zero
+  server-side setup. Doesn't help other people using the instance though.
+
 ## Known bugs found and fixed post-deploy
 
 - **`NATIONAL_ID_REGEX` corruption via systemd (found 2026-09-04)** — the `k2.service` unit originally had `EnvironmentFile=/home/ubuntu/k2-automation/.env`, loading `.env` a *second* time through systemd's own parser, on top of the app already loading it itself via `python-dotenv` (`rules_config.py`). Systemd's `EnvironmentFile` parser strips single backslashes, so `NATIONAL_ID_REGEX=\d{12}` (correct) silently became `d{12}` in the running process's environment — a pattern that can never match a real ID, since national IDs are all digits and contain no letter "d". Effect: **~57,000 genuinely valid National ID accounts got flagged as invalid** on every job, because virtually every National-Id-typed row failed this corrupted check. Passport/Civil ID checks were unaffected (their patterns have no backslashes).
