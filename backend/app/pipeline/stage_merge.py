@@ -133,14 +133,25 @@ def _normalise_date_opened(resp: pd.DataFrame) -> pd.DataFrame:
 
 
 def _add_missing_time_of_day(df: pd.DataFrame, column: str) -> tuple[pd.DataFrame, int]:
-    """Append ' 00:00:00' to any non-blank `column` value that doesn't
-    already carry a time-of-day component -- and leave every other value
-    (blank, or already timestamped) exactly as it is. Purely additive: the
+    """Append ' 00:00:00' to any `column` value that's a real, parseable
+    date but doesn't already carry a time-of-day component -- and leave
+    every other value (blank, already timestamped, or not a real date at
+    all) exactly as it is. Purely additive for values it does touch: the
     date portion itself is never reparsed or reformatted, so there's no
     risk of misreading an ambiguous date (day-first vs month-first the way
     a full reparse would have to guess) -- this only checks "does this
     string already end in something that looks like a time," not "what
     date is this."
+
+    Requires parse_dob_series(values) to actually succeed before adding a
+    time suffix -- series_available alone isn't enough, since it only
+    excludes a configured placeholder list (EXTRA_EMPTY_PLACEHOLDER_VALUES
+    etc.), not arbitrary free-text garbage. Without this check, a value
+    like "NOT APPLICABLE" (non-blank, not in that list, no time-looking
+    substring) got " 00:00:00" glued onto it verbatim -- shipped in real
+    output as "NOT APPLICABLE 00:00:00". parse_dob_series is only used here
+    to test validity, never to replace the value, so real dates still pass
+    through completely unreformatted.
 
     Shared by both ACCOUNT_HOLDER_DOB and DATE_OPENED at the end of the
     Stage 3 merge -- either may or may not already carry a time component
@@ -150,11 +161,12 @@ def _add_missing_time_of_day(df: pd.DataFrame, column: str) -> tuple[pd.DataFram
     have it or reformatting real data along the way."""
     if column not in df.columns:
         return df, 0
-    from .toolbox import series_available
+    from .toolbox import parse_dob_series
     df = df.copy()
     values = df[column].astype(str).str.strip()
     has_time = values.str.contains(r"\d{1,2}:\d{2}", regex=True, na=False)
-    needs_time = series_available(values) & ~has_time
+    is_real_date = parse_dob_series(values).notna()
+    needs_time = is_real_date & ~has_time
     df.loc[needs_time, column] = values.loc[needs_time] + " 00:00:00"
     return df, int(needs_time.sum())
 
