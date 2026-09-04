@@ -51,7 +51,15 @@ server {
 EOF
 systemctl enable --now nginx
 
-# systemd unit for the app (not started yet -- .env with real DB creds isn't there yet)
+# systemd unit for the app (not started yet -- .env with real DB creds isn't there yet).
+# Deliberately NO EnvironmentFile= line here -- the app already loads .env
+# itself via python-dotenv (rules_config.py's load_dotenv()), identically to
+# local dev. Adding EnvironmentFile= on top of that double-loads it through
+# systemd's OWN separate parser, which corrupts any value containing a
+# backslash escape (e.g. NATIONAL_ID_REGEX=\d{12} silently became d{12} --
+# systemd strips the backslash -- which flagged ~57,000 genuinely valid
+# National ID accounts as invalid before this was found and fixed). One
+# loading mechanism, not two, for the same file.
 cat > /etc/systemd/system/k2.service <<'EOF'
 [Unit]
 Description=K2 Automation
@@ -60,7 +68,6 @@ After=network.target postgresql.service
 [Service]
 User=ubuntu
 WorkingDirectory=/home/ubuntu/k2-automation
-EnvironmentFile=/home/ubuntu/k2-automation/.env
 ExecStart=/home/ubuntu/k2-automation/venv/bin/python run.py --host 127.0.0.1 --port 8000
 Restart=always
 

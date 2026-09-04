@@ -109,6 +109,13 @@ port 5432.)
 10. Set up backups — no RDS means no automatic ones. Simplest: a nightly cron running `pg_dump` (optionally synced to S3). Not yet set up — revisit.
 11. Watch disk usage (`df -h`) over time — Postgres data, WAL, and the app's `jobs/` output all now share the same 15GB volume that used to be sized for the app alone. Resize the EBS volume (non-destructive, done live) if it fills up.
 
+## Known bugs found and fixed post-deploy
+
+- **`NATIONAL_ID_REGEX` corruption via systemd (found 2026-09-04)** — the `k2.service` unit originally had `EnvironmentFile=/home/ubuntu/k2-automation/.env`, loading `.env` a *second* time through systemd's own parser, on top of the app already loading it itself via `python-dotenv` (`rules_config.py`). Systemd's `EnvironmentFile` parser strips single backslashes, so `NATIONAL_ID_REGEX=\d{12}` (correct) silently became `d{12}` in the running process's environment — a pattern that can never match a real ID, since national IDs are all digits and contain no letter "d". Effect: **~57,000 genuinely valid National ID accounts got flagged as invalid** on every job, because virtually every National-Id-typed row failed this corrupted check. Passport/Civil ID checks were unaffected (their patterns have no backslashes).
+  - **Fix**: removed `EnvironmentFile=` from the systemd unit entirely — the app's own `load_dotenv()` call is sufficient and behaves identically to local dev, so there's only one loading mechanism instead of two disagreeing ones. Confirmed fixed via `/proc/<pid>/environ` inspection and a fresh end-to-end job (ID Corrections count dropped from 57,451 to the correct 434).
+  - Fixed in the live instance's `/etc/systemd/system/k2.service` directly, and in `ec2-user-data.sh` so future launches don't reintroduce it.
+  - **Lesson for any future `.env` value with special characters**: don't trust that a value "looks right" in the file — verify what the *running process* actually receives (`sudo tr '\0' '\n' < /proc/$(systemctl show k2 -p MainPID --value)/environ`), since a file being correct doesn't guarantee the loading mechanism preserved it.
+
 ## Decisions made along the way (context for "why", not just "what")
 
 - **Default VPC over a custom one** — a custom VPC (with its own subnets/IGW/route tables) was started but abandoned; for a single-instance app it added failure points (e.g. a subnet mislabeled "private" that was actually routed like a public one) for no real benefit. The default VPC already has working public subnets and an IGW.
