@@ -147,19 +147,90 @@ def _seed_from_df(df: pd.DataFrame, engine: Engine, source: str) -> int:
     return len(df)
 
 
-def seed_from_file(path, database_url: str | None = None) -> int:
+_PARQUET_BATCH_ROWS = 50_000
+
+
+def _seed_from_parquet(path: Path, engine: Engine, source: str) -> int:
+    """Streaming seed for a .parquet file -- reads it one batch at a time so
+    memory stays flat no matter how big the file is (the xlsx/csv path has
+    to hold the whole table as a DataFrame, which is what OOM-killed the
+    app on a ~700MB export).
+
+    Builds the new table next to the live one and swaps it in at the end,
+    all in one transaction: if anything fails partway (bad file, crash),
+    the existing historical table is untouched. Each batch is upserted on
+    ACCOUNT_NUMBER, so when an account repeats, the later row in the file
+    wins -- same as the sort+drop_duplicates(keep="last") in _seed_from_df."""
+    import pyarrow.parquet as pq
+
+    pf = pq.ParquetFile(path)
+    # Same header cleanup store.read_table does for csv/xlsx (BOM, stray spaces).
+    file_cols = {name.replace("\ufeff", "").strip(): name for name in pf.schema_arrow.names}
+    missing = [c for c in COLUMNS if c not in file_cols]
+    if missing:
+        raise ValueError(f"Reference file missing columns: {missing}")
+    read_cols = [file_cols[c] for c in COLUMNS]
+
+    new_table, batch_table = f"{TABLE}_new", "_historical_batch"
+    col_list = ", ".join(f'"{c}"' for c in COLUMNS)
+    col_defs = ", ".join(f'"{c}" TEXT' for c in COLUMNS)
+    update_list = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in COLUMNS if c != KEY)
+    stamp = datetime.now()
+
+    with engine.begin() as conn:
+        conn.execute(text(f'DROP TABLE IF EXISTS "{new_table}"'))
+        conn.execute(text(
+            f'CREATE TABLE "{new_table}" ({col_defs}, "{JOB_ID_COL}" TEXT, "{UPDATED_AT_COL}" TIMESTAMP)'
+        ))
+        conn.execute(text(f'CREATE UNIQUE INDEX idx_{new_table}_{KEY} ON "{new_table}" ("{KEY}")'))
+        conn.execute(text(f'CREATE TEMP TABLE "{batch_table}" ({col_defs}) ON COMMIT DROP'))
+        dbapi_conn = conn.connection.driver_connection
+
+        for batch in pf.iter_batches(batch_size=_PARQUET_BATCH_ROWS, columns=read_cols):
+            df = batch.to_pandas()[read_cols]
+            df.columns = COLUMNS
+            df = df.astype(object).where(df.notna(), "").astype(str)
+            df = _clean_key(df).drop_duplicates(subset=[KEY], keep="last")
+
+            conn.execute(text(f'TRUNCATE "{batch_table}"'))
+            with dbapi_conn.cursor() as cur, cur.copy(f'COPY "{batch_table}" ({col_list}) FROM STDIN') as copy:
+                for row in df.itertuples(index=False, name=None):
+                    copy.write_row(row)
+            conn.execute(
+                text(f'INSERT INTO "{new_table}" ({col_list}, "{JOB_ID_COL}", "{UPDATED_AT_COL}") '
+                     f'SELECT {col_list}, :src, :ts FROM "{batch_table}" '
+                     f'ON CONFLICT ("{KEY}") DO UPDATE SET {update_list}, '
+                     f'"{JOB_ID_COL}" = EXCLUDED."{JOB_ID_COL}", "{UPDATED_AT_COL}" = EXCLUDED."{UPDATED_AT_COL}"'),
+                {"src": source, "ts": stamp},
+            )
+
+        conn.execute(text(f'DROP TABLE IF EXISTS "{TABLE}"'))
+        conn.execute(text(f'ALTER TABLE "{new_table}" RENAME TO "{TABLE}"'))
+        # Same index name the xlsx/csv path and upsert_rows use.
+        conn.execute(text(f'ALTER INDEX idx_{new_table}_{KEY} RENAME TO idx_{TABLE}_{KEY}'))
+        _touch_seeded_at(conn)
+        return conn.execute(text(f'SELECT count(*) FROM "{TABLE}"')).scalar()
+
+
+def seed_from_file(path, database_url: str | None = None, source: str = "CLI seed") -> int:
     """One-time (or re-run-to-refresh) full import of a historical reference
-    file (xlsx/csv) into the store -- replaces the table entirely. Not
-    called by the running app; run manually when (re)seeding from a fresh
-    export. database_url defaults to the app's own store (DATABASE_URL) but
-    can be pointed elsewhere (see data/seed_historical.py) without touching
-    the live db."""
+    file (xlsx/csv/parquet) into the store -- replaces the table entirely.
+    Run manually (data/seed_historical.py) or by the dashboard's upload
+    (routes/historical.py, which saves the upload to disk and calls this).
+    database_url defaults to the app's own store (DATABASE_URL) but can be
+    pointed elsewhere without touching the live db.
+
+    .parquet streams in batches (see _seed_from_parquet); xlsx/csv load the
+    whole table into memory first, so very large exports should be
+    converted with data/xlsx_to_parquet.py."""
     from . import store  # local import: avoid a cycle, store imports little from here
 
     path = Path(path)
-    df = store.read_table(path.read_bytes(), path.name)
     engine = _engine_for(database_url) if database_url else get_engine()
-    return _seed_from_df(df, engine, source="CLI seed")
+    if path.suffix.lower() == ".parquet":
+        return _seed_from_parquet(path, engine, source)
+    df = store.read_table(path.read_bytes(), path.name)
+    return _seed_from_df(df, engine, source=source)
 
 
 def seed_from_bytes(raw: bytes, filename: str, database_url: str | None = None) -> int:
@@ -253,4 +324,11 @@ def load_reference_df(account_numbers) -> pd.DataFrame:
             pd.read_sql_query(stmt, conn, params={"numbers": numbers[i:i + _QUERY_CHUNK]})
             for i in range(0, len(numbers), _QUERY_CHUNK)
         ]
-        return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=COLUMNS)
+        df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=COLUMNS)
+        # A real SQL NULL comes back as NaN here -- left alone, a later
+        # .astype(str) elsewhere in the pipeline (e.g. toolbox._s) would turn
+        # it into the literal text "nan", which looks like real data instead
+        # of "missing". Flatten it to "" now, at the one place this data
+        # enters the pipeline, rather than relying on every downstream stage
+        # to recognize "nan" as a placeholder.
+        return df.fillna("")

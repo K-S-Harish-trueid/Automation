@@ -140,7 +140,7 @@ def _workbook_summary(path) -> dict:
     upload (tens of thousands), so a full parse is still fast and this
     stays consistent with how every other reader in this codebase works."""
     path = Path(path)
-    if path.suffix.lower() == ".csv":
+    if path.suffix.lower() in (".csv", ".parquet"):
         df = store.read_table(path.read_bytes(), path.name)
         return {"sheets": [{"name": path.stem, "rows": len(df)}], "total_rows": len(df)}
     sheets = pd.read_excel(path, sheet_name=None, dtype=str, engine="calamine")

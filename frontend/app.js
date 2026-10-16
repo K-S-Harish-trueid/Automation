@@ -245,7 +245,7 @@ function setCard(html) {
 function filePickerMarkup(inputId, zoneId, fileNameId, prompt, note, icon = "fileUp") {
   return `
     <label class="dropzone" id="${zoneId}" for="${inputId}">
-      <input class="file-input" type="file" id="${inputId}" accept=".csv,.xlsx,.xls" />
+      <input class="file-input" type="file" id="${inputId}" accept=".csv,.xlsx,.xls,.parquet" />
       <span class="file-picker-icon">${iconMarkup(icon)}</span>
       <span class="dropzone-content">
         <span class="file-picker-trigger">${prompt}</span>
@@ -842,7 +842,7 @@ function renderDashboard() {
 function historicalSeedPanelMarkup(idPrefix) {
   return `
     <div class="upload-simple-layout">
-      ${filePickerMarkup(`${idPrefix}FileInput`, `${idPrefix}FileZone`, `${idPrefix}FileName`, "Select xlsx/csv", "Replaces the entire historical store -- same as seed_historical.py", "database")}
+      ${filePickerMarkup(`${idPrefix}FileInput`, `${idPrefix}FileZone`, `${idPrefix}FileName`, "Select xlsx/csv/parquet", "Replaces the entire historical store -- same as seed_historical.py", "database")}
     </div>
     <div class="row-actions">
       <button class="secondary quiet-action" id="${idPrefix}SeedBtn" type="button">${iconMarkup("database")}<span>Seed historical data</span></button>
@@ -927,7 +927,7 @@ function renderNewBatch() {
     </div>
     <div class="upload-simple-layout">
       ${showPageDescription("newBatch") ? `<p class="muted">Upload the raw K2 export (CSV, XLSX, or XLS) to start the pipeline.</p>` : ""}
-      ${filePickerMarkup("fileInput", "rawFileZone", "rawFileName", "Select raw file", "CSV, XLSX, or XLS")}
+      ${filePickerMarkup("fileInput", "rawFileZone", "rawFileName", "Select raw file", "CSV, XLSX, XLS, or Parquet")}
     </div>
     <div class="upload-preview" id="rawUploadPreview" aria-live="polite"></div>
     <div class="row-actions">
@@ -1133,11 +1133,11 @@ function renderStage3Page() {
       <div class="upload-file-group">
         <div class="upload-file-row">
           <span class="upload-file-step">1</span>
-          ${filePickerMarkup("stage3MobileFileInput", "stage3MobileFileZone", "stage3MobileFileName", "CMS Mobile Numbers export", "CSV, XLSX, or XLS", "smartphone")}
+          ${filePickerMarkup("stage3MobileFileInput", "stage3MobileFileZone", "stage3MobileFileName", "CMS Mobile Numbers export", "CSV, XLSX, XLS, or Parquet", "smartphone")}
         </div>
         <div class="upload-file-row">
           <span class="upload-file-step">2</span>
-          ${filePickerMarkup("stage3CardFileInput", "stage3CardFileZone", "stage3CardFileName", "CMS Card Details export", "CSV, XLSX, or XLS", "idCard")}
+          ${filePickerMarkup("stage3CardFileInput", "stage3CardFileZone", "stage3CardFileName", "CMS Card Details export", "CSV, XLSX, XLS, or Parquet", "idCard")}
         </div>
         <div class="upload-file-row">
           <span class="upload-file-step">3</span>
@@ -1388,7 +1388,7 @@ function renderUploadStage(current) {
     </div>
     <div class="upload-simple-layout">
       ${description ? `<p class="muted">${escapeHtml(description)}</p>` : ""}
-      ${filePickerMarkup("refFileInput", "referenceFileZone", "referenceFileName", `Select ${expectedFile.toLowerCase()}`, "CSV, XLSX, or XLS")}
+      ${filePickerMarkup("refFileInput", "referenceFileZone", "referenceFileName", `Select ${expectedFile.toLowerCase()}`, "CSV, XLSX, XLS, or Parquet")}
     </div>
     <div class="row-actions">
       <button id="uploadBtn">${iconMarkup("upload")}<span>Upload and continue</span></button>

@@ -112,8 +112,15 @@ def read_table(raw: bytes, filename: str) -> pd.DataFrame:
             df = pd.read_excel(io.BytesIO(raw), dtype=str, engine="calamine").fillna("")
         except Exception as e:
             raise ValueError(f"Could not read Excel file {filename}: {e}") from e
+    elif name.endswith(".parquet"):
+        try:
+            df = pd.read_parquet(io.BytesIO(raw))
+        except Exception as e:
+            raise ValueError(f"Could not read Parquet file {filename}: {e}") from e
+        # Same all-text, no-NaN shape the csv/xlsx branches produce.
+        df = df.astype(object).where(df.notna(), "").astype(str)
     else:
-        raise ValueError("Unsupported file type. Upload a .csv, .xlsx, or .xls file.")
+        raise ValueError("Unsupported file type. Upload a .csv, .xlsx, .xls, or .parquet file.")
 
     df.columns = df.columns.astype(str).str.replace("﻿", "", regex=False).str.strip()
     return df
