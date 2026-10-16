@@ -5,6 +5,7 @@ data/*
 !data/seed_historical.py
 !data/create_xlsx_2_db.py
 !data/migrate_address_pools.py
+!data/xlsx_to_parquet.py
 __pycache__/
 *.pyc
 .venv/
