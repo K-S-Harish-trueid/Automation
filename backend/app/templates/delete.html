@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>K2 Job Cleanup</title>
+<link rel="stylesheet" href="style.css" />
+<script src="config.js"></script>
+<style>
+  /* Standalone admin page on the shared stylesheet's tokens, same as seed.html. */
+  body {
+    background: var(--canvas);
+    color: var(--text);
+    font-family: var(--font-body);
+    margin: 0;
+  }
+  .page { max-width: 1160px; margin: 0 auto; padding: 28px 24px 64px; }
+  a.back { font-size: 13px; text-decoration: none; color: var(--muted); }
+  a.back:hover { color: var(--accent); }
+
+  header.top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin: 10px 0 22px; flex-wrap: wrap; }
+  header.top h1 { font-family: var(--font-display); font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  header.top p { margin: 0; color: var(--muted); font-size: 13px; max-width: 640px; line-height: 1.5; }
+
+  .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 14px 16px; }
+  .stat .k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .stat .v { font-size: 22px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .stat.good .v { color: var(--good); }
+  .stat.warn .v { color: var(--warn); }
+
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 3px; }
+  .seg button { background: transparent; border: 0; box-shadow: none; color: var(--muted); padding: 6px 12px; font-size: 13px; border-radius: var(--radius-sm); transform: none; }
+  .seg button:hover:not(:disabled) { color: var(--text); background: transparent; box-shadow: none; transform: none; }
+  .seg button.on { background: var(--surface-strong); color: var(--text); }
+  .seg .n { color: var(--muted); margin-left: 6px; font-size: 12px; }
+  .search { flex: 1; min-width: 200px; max-width: 320px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-md); color: var(--text); padding: 8px 12px; font-size: 13px; }
+  .search:focus { outline: none; border-color: var(--accent); }
+  .spacer { flex: 1; }
+
+  button.danger { background: var(--danger-soft); color: var(--danger); border: 1px solid rgba(242, 109, 120, .45); box-shadow: none; font-size: 13px; padding: 8px 14px; }
+  button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; box-shadow: none; transform: none; }
+  button.danger.solid { background: var(--danger); color: #fff; }
+
+  .jobs-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); overflow: hidden; }
+  .jobs-card .scroll { overflow-x: auto; }
+  table.jobs { width: 100%; min-width: 860px; border-collapse: collapse; font-family: var(--font-body); font-size: 13px; }
+  table.jobs th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 11px 14px; background: var(--surface-raised); border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+  table.jobs td { padding: 12px 14px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
+  table.jobs tr:last-child td { border-bottom: 0; }
+  table.jobs tbody tr:hover td { background: var(--accent-glow); }
+  table.jobs .r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .jid { font-family: var(--font-mono); font-weight: 600; font-size: 13px; }
+  .fname { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .muted { color: var(--muted); }
+  .status { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .status.done { color: var(--good); background: var(--good-soft); }
+  .status.mid { color: var(--warn); background: var(--warn-soft); }
+  .status.busy { color: var(--accent); background: var(--accent-soft); }
+  .stage { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  button.row-del { background: transparent; border: 1px solid var(--border-soft); color: var(--muted); box-shadow: none; padding: 6px 10px; font-size: 12px; display: inline-flex; gap: 6px; align-items: center; transform: none; }
+  button.row-del:hover:not(:disabled) { color: var(--danger); border-color: rgba(242, 109, 120, .45); background: var(--danger-soft); box-shadow: none; transform: none; }
+  button.row-del.armed { color: #fff; background: var(--danger); border-color: var(--danger); }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+
+  .toast { position: fixed; right: 24px; bottom: 24px; max-width: 420px; padding: 12px 16px; border-radius: var(--radius-md); font-size: 13px; box-shadow: var(--shadow-md); background: var(--surface-raised); border: 1px solid var(--border); opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: none; }
+  .toast.ok { border-left: 3px solid var(--good); }
+  .toast.err { border-left: 3px solid var(--danger); }
+
+  .overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: none; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+  .overlay.show { display: flex; }
+  .dialog { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); width: 100%; max-width: 460px; padding: 22px; }
+  .dialog h2 { margin: 0 0 8px; font-size: 17px; }
+  .dialog p { margin: 0 0 12px; color: var(--text-soft); font-size: 13px; line-height: 1.5; }
+  .dialog ul { margin: 0 0 14px; padding-left: 18px; color: var(--text-soft); font-size: 13px; line-height: 1.7; }
+  .dialog label { font-size: 12px; color: var(--muted); }
+  .dialog input { width: 100%; box-sizing: border-box; margin-top: 6px; background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text); padding: 9px 12px; font-family: var(--font-mono); }
+  .dialog input:focus { outline: none; border-color: var(--danger); }
+  .dialog .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
+  @media (max-width: 860px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
+</head>
+<body>
+<div class="page">
+  <a class="back" href="/">&larr; Back to K2 Automation</a>
+  <header class="top">
+    <div>
+      <h1>Job Cleanup</h1>
+      <p>Deleting a job removes its folder (uploads, working data, downloads) and its rows in
+        <b>audit_log</b> and <b>generated_records</b>. Updates it made to the <b>historical</b> table are kept.
+        Deleted jobs can't be recovered.</p>
+    </div>
+  </header>
+
+  <section class="stats">
+    <div class="stat"><div class="k">Jobs</div><div class="v" id="sTotal">–</div></div>
+    <div class="stat good"><div class="k">Completed</div><div class="v" id="sDone">–</div></div>
+    <div class="stat warn"><div class="k">In progress</div><div class="v" id="sMid">–</div></div>
+    <div class="stat"><div class="k">Disk used</div><div class="v" id="sDisk">–</div></div>
+    <div class="stat"><div class="k">Audit rows</div><div class="v" id="sAudit">–</div></div>
+  </section>
+
+  <div class="toolbar">
+    <div class="seg" id="seg">
+      <button data-f="all" class="on">All<span class="n" id="nAll"></span></button>
+      <button data-f="done">Completed<span class="n" id="nDone"></span></button>
+      <button data-f="in_progress">In progress<span class="n" id="nMid"></span></button>
+    </div>
+    <input class="search" id="q" placeholder="Search job ID or file name" />
+    <div class="spacer"></div>
+    <button class="danger" id="delAllBtn" disabled>Delete all</button>
+  </div>
+
+  <div class="jobs-card"><div class="scroll">
+    <table class="jobs">
+      <thead><tr>
+        <th>Job</th><th>Created</th><th>Status</th>
+        <th class="r">Records</th><th class="r">Size</th><th class="r">Audit rows</th><th class="r">Generated</th><th></th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="8" class="empty">Loading jobs…</td></tr></tbody>
+    </table>
+  </div></div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+    <h2 id="dlgTitle">Delete jobs</h2>
+    <p id="dlgText"></p>
+    <ul id="dlgList"></ul>
+    <label for="dlgInput">Type <b>DELETE</b> to confirm</label>
+    <input id="dlgInput" autocomplete="off" spellcheck="false" />
+    <div class="actions">
+      <button class="secondary" id="dlgCancel">Cancel</button>
+      <button class="danger solid" id="dlgOk" disabled>Delete</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API_BASE = window.K2_API_BASE || "/api";
+const $ = id => document.getElementById(id);
+let jobs = [], filter = "all", pgOk = true;
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const num = n => n == null ? "–" : Number(n).toLocaleString();
+function size(b) {
+  if (b >= 1e9) return (b / 1e9).toFixed(2) + " GB";
+  if (b >= 1e6) return (b / 1e6).toFixed(1) + " MB";
+  return Math.max(1, Math.round(b / 1e3)) + " KB";
+}
+// created_at is a Unix timestamp (seconds) in status.json.
+function when(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} <span class="muted">${p(d.getHours())}:${p(d.getMinutes())}</span>`;
+}
+const kindOf = j => j.is_processing ? "busy" : j.is_done ? "done" : "mid";
+function toast(text, cls) {
+  const t = $("toast");
+  t.textContent = text; t.className = `toast show ${cls}`;
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.className = "toast", 5000);
+}
+
+function visible() {
+  const q = $("q").value.trim().toLowerCase();
+  return jobs.filter(j =>
+    (filter === "all" || (filter === "done") === j.is_done) &&
+    (!q || j.job_id.includes(q) || (j.filename || "").toLowerCase().includes(q)));
+}
+
+function render() {
+  const nDone = jobs.filter(j => j.is_done).length;
+  $("sTotal").textContent = jobs.length;
+  $("sDone").textContent = nDone;
+  $("sMid").textContent = jobs.length - nDone;
+  $("sDisk").textContent = size(jobs.reduce((a, j) => a + j.folder_bytes, 0));
+  $("sAudit").textContent = pgOk ? num(jobs.reduce((a, j) => a + (j.audit_rows || 0), 0)) : "n/a";
+  $("nAll").textContent = jobs.length; $("nDone").textContent = nDone; $("nMid").textContent = jobs.length - nDone;
+
+  const rows = visible();
+  const deletable = rows.filter(j => !j.is_processing);
+  const btn = $("delAllBtn");
+  btn.disabled = !deletable.length;
+  btn.textContent = filter === "all" ? `Delete all (${deletable.length})`
+    : filter === "done" ? `Delete all completed (${deletable.length})` : `Delete all in progress (${deletable.length})`;
+
+  if (!rows.length) { $("rows").innerHTML = `<tr><td colspan="8" class="empty">No jobs here.</td></tr>`; return; }
+  $("rows").innerHTML = rows.map(j => {
+    const k = kindOf(j);
+    const label = { done: "Completed", mid: "In progress", busy: "Processing" }[k];
+    const stage = k === "done" ? "" : `<div class="stage">${esc(j.stage_title)}</div>`;
+    return `<tr>
+      <td><div class="jid">${esc(j.job_id)}</div><div class="fname">${esc(j.filename)}</div></td>
+      <td>${when(j.created_at)}</td>
+      <td><span class="status ${k}">${label}</span>${stage}</td>
+      <td class="r">${num(j.row_count)}</td>
+      <td class="r">${size(j.folder_bytes)}</td>
+      <td class="r">${num(j.audit_rows)}</td>
+      <td class="r">${num(j.generated_rows)}</td>
+      <td class="r"><button class="row-del" data-job="${esc(j.job_id)}" ${j.is_processing ? "disabled title='Running, cannot be deleted'" : ""}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+        <span>Delete</span></button></td>
+    </tr>`;
+  }).join("");
+}
+
+async function load() {
+  const res = await fetch(`${API_BASE}/admin/jobs`);
+  if (!res.ok) { $("rows").innerHTML = `<tr><td colspan="8" class="empty">Could not load jobs (${res.status}).</td></tr>`; return; }
+  const data = await res.json();
+  jobs = data.jobs; pgOk = data.postgres_ok;
+  if (!pgOk) toast("Postgres is unreachable: row counts unknown, and deleting will fail until it's back.", "err");
+  render();
+}
+
+$("seg").addEventListener("click", e => {
+  const b = e.target.closest("button[data-f]"); if (!b) return;
+  filter = b.dataset.f;
+  document.querySelectorAll("#seg button").forEach(x => x.classList.toggle("on", x === b));
+  render();
+});
+$("q").addEventListener("input", render);
+
+// Single job: two clicks (arm, then confirm within 4 s) instead of a browser confirm().
+$("rows").addEventListener("click", async e => {
+  const btn = e.target.closest("button.row-del");
+  if (!btn || btn.disabled) return;
+  const job = btn.dataset.job, label = btn.querySelector("span");
+  if (!btn.classList.contains("armed")) {
+    btn.classList.add("armed"); label.textContent = "Confirm";
+    setTimeout(() => { btn.classList.remove("armed"); label.textContent = "Delete"; }, 4000);
+    return;
+  }
+  btn.disabled = true; label.textContent = "Deleting…";
+  const res = await fetch(`${API_BASE}/admin/jobs/${encodeURIComponent(job)}`, { method: "DELETE" });
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) toast(`Deleted ${job}: ${num(body.audit_rows)} audit and ${num(body.generated_rows)} generated row(s) removed.`, "ok");
+  else toast(`Could not delete ${job}: ${body.detail || res.status}`, "err");
+  load();
+});
+
+// Delete all (in the current filter): typed confirmation in a dialog.
+$("delAllBtn").addEventListener("click", () => {
+  const targets = visible().filter(j => !j.is_processing);
+  const what = { all: "all", done: "all completed", in_progress: "all in-progress" }[filter];
+  const q = $("q").value.trim();
+  $("dlgTitle").textContent = `Delete ${what} jobs`;
+  $("dlgText").textContent = `This permanently deletes ${targets.length} job(s)` + (q ? ` matching "${q}"` : "") + ":";
+  $("dlgList").innerHTML =
+    `<li>${size(targets.reduce((a, j) => a + j.folder_bytes, 0))} of job folders</li>` +
+    `<li>${num(targets.reduce((a, j) => a + (j.audit_rows || 0), 0))} audit_log rows</li>` +
+    `<li>${num(targets.reduce((a, j) => a + (j.generated_rows || 0), 0))} generated_records rows</li>` +
+    `<li>The historical table is not changed</li>`;
+  $("dlgInput").value = ""; $("dlgOk").disabled = true; $("dlgOk").textContent = "Delete";
+  $("overlay").classList.add("show"); $("dlgInput").focus();
+});
+const closeDlg = () => $("overlay").classList.remove("show");
+$("dlgCancel").addEventListener("click", closeDlg);
+$("overlay").addEventListener("click", e => { if (e.target === $("overlay")) closeDlg(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDlg(); });
+$("dlgInput").addEventListener("input", e => { $("dlgOk").disabled = e.target.value.trim() !== "DELETE"; });
+$("dlgOk").addEventListener("click", async () => {
+  $("dlgOk").disabled = true; $("dlgOk").textContent = "Deleting…";
+  const targets = visible().filter(j => !j.is_processing).map(j => j.job_id);
+  let deleted = 0, audit = 0, gen = 0; const failed = [];
+  // One request per job, so a search filter is respected exactly and each
+  // job is still all-or-nothing on the server.
+  for (const job of targets) {
+    const res = await fetch(`${API_BASE}/admin/jobs/${encodeURIComponent(job)}`, { method: "DELETE" });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) { deleted++; audit += body.audit_rows; gen += body.generated_rows; } else failed.push(job);
+  }
+  closeDlg();
+  toast(`Deleted ${deleted} job(s), ${num(audit)} audit and ${num(gen)} generated row(s).` +
+    (failed.length ? ` Failed: ${failed.join(", ")}.` : ""), failed.length ? "err" : "ok");
+  load();
+});
+
+load();
+</script>
+</body>
+</html>
