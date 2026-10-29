@@ -105,6 +105,6 @@ Same DOB rules as CHECK 3 above. Runs in this order:
   3. NOT RETURNED -- any account that was in the DOB Corrections sheet sent
      to Haider (frozen stage2_haider.xlsx) but is missing from his response
      -> XXX_NOT_COLLECTED_XXX.
-  4. FINAL CHECK -- every row in the job: DOB still blank/invalid, or the
-     row has no ACCOUNT_NUMBER -> XXX_NOT_COLLECTED_XXX.
+  4. FINAL CHECK -- every row in the job: DOB still blank/invalid ->
+     XXX_NOT_COLLECTED_XXX.
 Accounts never sent to Haider (valid DOB) are kept as they are.

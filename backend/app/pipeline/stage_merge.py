@@ -289,19 +289,15 @@ def apply_haider_corrections_response(
 
 
 def apply_final_dob_check(df: pd.DataFrame):
-    """Runs after Haider's corrections are merged: any DOB that is blank,
-    invalid (same rules as Stage 1's DOB check), or on a row with no
-    ACCOUNT_NUMBER is set to NOT_COLLECTED. Rows already NOT_COLLECTED are
-    left alone and not counted."""
+    """Runs after Haider's corrections are merged: any DOB that is still
+    blank or invalid (same rules as Stage 1's DOB check) is set to
+    NOT_COLLECTED. Rows already NOT_COLLECTED are left alone and not
+    counted."""
     from .stages.id_dob_validate import mask_dob_invalid
-    from .toolbox import NOT_COLLECTED, series_available
+    from .toolbox import NOT_COLLECTED
     already = df["ACCOUNT_HOLDER_DOB"].astype(str).str.strip().eq(NOT_COLLECTED)
-    no_account = ~series_available(df["ACCOUNT_NUMBER"]) & ~already
-    invalid = mask_dob_invalid(df) & ~already & ~no_account
-    df.loc[no_account | invalid, "ACCOUNT_HOLDER_DOB"] = NOT_COLLECTED
-    counts = {"dob_invalid": int(invalid.sum()), "dob_no_account": int(no_account.sum())}
-    summary = (
-        f"DOB check: {counts['dob_invalid']} blank/invalid and {counts['dob_no_account']} "
-        f"with no account number set to {NOT_COLLECTED}."
-    )
+    invalid = mask_dob_invalid(df) & ~already
+    df.loc[invalid, "ACCOUNT_HOLDER_DOB"] = NOT_COLLECTED
+    counts = {"dob_invalid": int(invalid.sum())}
+    summary = f"DOB check: {counts['dob_invalid']} blank/invalid set to {NOT_COLLECTED}."
     return df, summary, counts

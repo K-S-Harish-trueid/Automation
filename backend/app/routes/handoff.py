@@ -324,14 +324,14 @@ async def apply_haider_response(
             source_file=haider_filename, operator="Haider",
         )
 
-        # --- 3b. Final DOB check: blank/invalid/no-account DOB -> NOT_COLLECTED ---
+        # --- 3b. Final DOB check: blank/invalid DOB -> NOT_COLLECTED ---
         before_dob_check = after_haider
         df, dob_check_summary, dob_check_counts = stage_merge.apply_final_dob_check(df)
         after_haider = df.copy(deep=True)
         _append_audit_events(
             st, before_dob_check, after_haider, stage_id=cur["id"],
             fields=stage_merge.DOB_COLS, label="Not collected",
-            reason="DOB blank, invalid, or account number missing after Haider's corrections; set to the not-collected placeholder.",
+            reason="DOB blank or invalid after Haider's corrections; set to the not-collected placeholder.",
             source_file="System", operator="System",
         )
 
@@ -370,7 +370,7 @@ async def apply_haider_response(
                 "dob_matched": haider_counts["dob_matched"],
                 "dob_not_collected": (
                     haider_counts["dob_haider_invalid"] + haider_counts["dob_not_returned"]
-                    + dob_check_counts["dob_invalid"] + dob_check_counts["dob_no_account"]
+                    + dob_check_counts["dob_invalid"]
                 ),
             },
             "sub_steps": [
@@ -391,9 +391,7 @@ async def apply_haider_response(
                  )},
                 {"label": "DOB Check",
                  "detail": (
-                     f"{dob_check_counts['dob_invalid']} blank/invalid, "
-                     f"{dob_check_counts['dob_no_account']} no account number "
-                     f"set to not collected"
+                     f"{dob_check_counts['dob_invalid']} blank/invalid set to not collected"
                  )},
                 {"label": "DOB Timestamp Added",
                  "detail": f"{dob_padded_count} account(s) had a missing 00:00:00 time-of-day added"},
