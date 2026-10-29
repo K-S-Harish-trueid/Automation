@@ -69,20 +69,26 @@ against the previous case's results before running
      province-map an "outside the country" row, so it defaults to the
      general Baghdad pool instead.
 
-  2. CITY PLACEHOLDER + INVALID ADDRESS
-     ADDRESS_CITY == "00000" AND address invalid (and not already handled
+  JUNK CITY / PROVINCE (used by constraints 2-4) -- ADDRESS_CITY or
+  ADDRESS_PROVINCE fails the same 5 checks listed above for the address
+  (missing/placeholder, no letters, denylist exact match, leading zero run,
+  long digit run), e.g. "0", "000", "00000", "null", blank, "JUNE".
+  See mask_location_junk.
+
+  2. JUNK CITY/PROVINCE + INVALID ADDRESS
+     City or province is junk AND address invalid (and not already handled
      by constraint 1) -> same as above: city/province -> "Baghdad",
      ACCOUNT_ADDRESS -> BAGHDAD_ADDRESS_POOL.
 
-  3. REAL CITY + INVALID ADDRESS
-     ADDRESS_CITY != "00000" AND address invalid -> look up the row's
+  3. REAL CITY/PROVINCE + INVALID ADDRESS
+     City and province both not junk AND address invalid -> look up the row's
      ADDRESS_PROVINCE in PROVINCE_ADDRESS_MAP. If mapped, replace only
      ACCOUNT_ADDRESS with a value from that province's pool (city/province
      fields are left as they are). If the province has NO entry in
      PROVINCE_ADDRESS_MAP, nothing is replaced -- the row is left invalid.
 
-  4. CITY PLACEHOLDER + ALREADY-VALID ADDRESS
-     ADDRESS_CITY == "00000" AND address is NOT invalid -> just default
+  4. JUNK CITY/PROVINCE + ALREADY-VALID ADDRESS
+     City or province is junk AND address is NOT invalid -> just default
      city/province to "Baghdad", keep the existing address untouched.
 
 POOL ASSIGNMENT

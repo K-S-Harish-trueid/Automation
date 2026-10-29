@@ -70,8 +70,9 @@ _RULES_PANELS = {
             "Contains a run of 7+ consecutive digits anywhere -- almost always a phone "
             "number pasted into the field",
         ],
-        "note": "If invalid: \"outside the country\" or city 00000 → Baghdad pool + city/province "
-                "reset to Baghdad. Real city with a mapped province → that province's own pool, "
+        "note": "City or province junk (same checks: 0, 000, null, blank, denylist...) → city/province "
+                "set to Baghdad (address kept if valid). If address invalid: \"outside the country\" or "
+                "junk city/province → Baghdad pool + city/province reset to Baghdad. Real city with a mapped province → that province's own pool, "
                 "city/province untouched. Unmapped province → left invalid, nothing changes.",
     },
     "mobile_fill": {

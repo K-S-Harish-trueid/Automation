@@ -11,8 +11,9 @@ from ..toolbox import (
 )
 
 
-def mask_address_invalid(df: pd.DataFrame) -> pd.Series:
-    address = _s(df, "ACCOUNT_ADDRESS")
+def _junk_mask(address: pd.Series) -> pd.Series:
+    """The five junk checks, for any one text column (ACCOUNT_ADDRESS, and
+    also ADDRESS_CITY / ADDRESS_PROVINCE -- see mask_location_junk)."""
     missing = ~series_available(address)
     # No letters at all -- e.g. a phone number typed into the address field,
     # or leftover punctuation like "-": no real street/area name is ever
@@ -33,6 +34,17 @@ def mask_address_invalid(df: pd.DataFrame) -> pd.Series:
     leading_zero_run = series_has_leading_zero_run(address, min_zeros=3)
     long_digit_run = series_has_long_digit_run(address, min_len=7)
     return missing | no_letters | known_bad | leading_zero_run | long_digit_run
+
+
+def mask_address_invalid(df: pd.DataFrame) -> pd.Series:
+    return _junk_mask(_s(df, "ACCOUNT_ADDRESS"))
+
+
+def mask_location_junk(df: pd.DataFrame) -> pd.Series:
+    """ADDRESS_CITY or ADDRESS_PROVINCE fails the same junk checks as the
+    address (blank/placeholder, no letters, denylist, digit runs) -- e.g.
+    "0", "000", "null", "JUNE". Both get set to Baghdad (Cases 2 and 4)."""
+    return _junk_mask(_s(df, "ADDRESS_CITY")) | _junk_mask(_s(df, "ADDRESS_PROVINCE"))
 
 
 def stage_address_fix(df: pd.DataFrame, **_):
@@ -70,10 +82,10 @@ def stage_address_fix(df: pd.DataFrame, **_):
         df.loc[idx, "ACCOUNT_ADDRESS"] = balanced_assign(len(idx), baghdad_pool)
         fixed_rows += len(idx)
 
-    # Case 2: city is the "00000" placeholder and the address is invalid ->
-    # default city/province to Baghdad and pull from the general pool.
-    city = _s(df, "ADDRESS_CITY")
-    city_placeholder_invalid = city.eq("00000") & mask_address_invalid(df)
+    # Case 2: city or province is junk (mask_location_junk) and the address
+    # is invalid -> default city/province to Baghdad and pull from the
+    # general pool.
+    city_placeholder_invalid = mask_location_junk(df) & mask_address_invalid(df)
     idx = df.index[city_placeholder_invalid]
     if len(idx) and baghdad_pool:
         df.loc[idx, "ADDRESS_CITY"] = "Baghdad"
@@ -87,9 +99,8 @@ def stage_address_fix(df: pd.DataFrame, **_):
     # synthesize it from and no manual step catches it afterward, so it
     # shows up in the "invalid addresses remaining" total. (Also true if the
     # pool table itself is empty/unreachable -- see address_pools_db.py.)
-    city = _s(df, "ADDRESS_CITY")
     province = _s(df, "ADDRESS_PROVINCE")
-    city_real_invalid = (~city.eq("00000")) & mask_address_invalid(df)
+    city_real_invalid = ~mask_location_junk(df) & mask_address_invalid(df)
     unmapped_rows = 0
     if city_real_invalid.any():
         provinces_by_row = province[city_real_invalid]
@@ -101,10 +112,9 @@ def stage_address_fix(df: pd.DataFrame, **_):
             df.loc[df.index.isin(group_idx), "ACCOUNT_ADDRESS"] = balanced_assign(len(group_idx), options)
             fixed_rows += len(group_idx)
 
-    # Case 4: city is the "00000" placeholder but the address is already
-    # valid -> just default city/province to Baghdad, keep the address.
-    city = _s(df, "ADDRESS_CITY")
-    city_placeholder_valid = city.eq("00000") & ~mask_address_invalid(df)
+    # Case 4: city or province is junk but the address is already valid ->
+    # just default city/province to Baghdad, keep the address.
+    city_placeholder_valid = mask_location_junk(df) & ~mask_address_invalid(df)
     idx = df.index[city_placeholder_valid]
     if len(idx):
         df.loc[idx, "ADDRESS_CITY"] = "Baghdad"
