@@ -106,11 +106,6 @@ CIVIL_ID_SYNONYMS = _env_list("CIVIL_ID_SYNONYMS", "civil id,civilid,civil_id")
 # "field is empty" across every stage.
 EXTRA_EMPTY_PLACEHOLDER_VALUES = _env_list("EXTRA_EMPTY_PLACEHOLDER_VALUES", "0,00000,null,none,na,n/a")
 
-# default_id.py: format of a generated Civil ID -- PREFIX + N random
-# digits, zero-padded (default "00" + 6 digits = 8 characters total).
-GENERATED_ID_PREFIX = _env_str("GENERATED_ID_PREFIX", "00")
-GENERATED_ID_RANDOM_DIGITS = _env_int("GENERATED_ID_RANDOM_DIGITS", 6)
-
 # store.py: rolling cap on how many completed job folders are kept on disk
 # (job folders contain KYC data) before the oldest non-processing one is
 # pruned to make room for a new one. Moved here from store.py itself --

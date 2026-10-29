@@ -1,9 +1,6 @@
-import random
-
 import pandas as pd
 
-from ...rules_config import GENERATED_ID_PREFIX, GENERATED_ID_RANDOM_DIGITS
-from ..toolbox import _s, id_missing_mask
+from ..toolbox import NOT_COLLECTED, id_missing_mask
 
 
 def default_id_invalid_mask(df: pd.DataFrame) -> pd.Series:
@@ -15,20 +12,11 @@ def default_id_invalid_mask(df: pd.DataFrame) -> pd.Series:
 
 
 def stage_default_id_assign(df: pd.DataFrame, **_):
+    """No ID is generated anymore: a row still missing a usable ID after the
+    final ID check gets the not-collected placeholder in both ID_TYPE and
+    ID_NUMBER, so the output says plainly that no ID was collected instead
+    of inventing one."""
     invalid_mask = default_id_invalid_mask(df)
-    # Avoid every existing value, including IDs on rows that currently fail
-    # validation, so generated Civil IDs cannot duplicate data already present.
-    used = set(_s(df, "ID_NUMBER"))
-    rnd = random.Random()
-    new_ids = []
-    max_value = 10 ** GENERATED_ID_RANDOM_DIGITS - 1
-    for _ in range(int(invalid_mask.sum())):
-        while True:
-            candidate = GENERATED_ID_PREFIX + f"{rnd.randint(0, max_value):0{GENERATED_ID_RANDOM_DIGITS}d}"
-            if candidate not in used:
-                used.add(candidate)
-                new_ids.append(candidate)
-                break
-    df.loc[invalid_mask, "ID_NUMBER"] = new_ids
-    df.loc[invalid_mask, "ID_TYPE"] = "Civil Id"
-    return df, f"Assigned default Civil ID numbers to {int(invalid_mask.sum())} remaining invalid records."
+    count = int(invalid_mask.sum())
+    df.loc[invalid_mask, ["ID_TYPE", "ID_NUMBER"]] = NOT_COLLECTED
+    return df, f"Set {count} record(s) with no usable ID to {NOT_COLLECTED}."

@@ -205,8 +205,17 @@ def compute_id_validity(df: pd.DataFrame):
     num_valid |= is_passport & num_avail & passport_ok
     num_valid |= is_nid & num_avail & nid_ok
     num_valid |= is_civil & num_avail
+    # An all-zero number is never a real ID, whatever the type -- without this
+    # a Civil ID (no format rule) or a National ID of twelve 0s would pass.
+    num_valid &= ~series_all_zeros(id_num_s)
 
     return type_valid, num_valid
+
+
+def series_all_zeros(s: pd.Series) -> pd.Series:
+    """True where the value is one or more 0s and nothing else ("0", "000000",
+    "000000000000"). Used to reject all-zero ID numbers of any type."""
+    return s.astype(str).str.strip().str.fullmatch(r"0+", na=False)
 
 
 def id_missing_mask(df: pd.DataFrame) -> pd.Series:
@@ -224,7 +233,9 @@ def id_missing_mask(df: pd.DataFrame) -> pd.Series:
     type_avail = series_available(id_type)
     num_avail = series_available(id_number)
     is_doc = id_type.str.lower().eq("doc")
-    return ~type_avail | ~num_avail | is_doc
+    # All zeros counts as missing here too, even from Haider -- it's never a
+    # real ID, so default_id turns it into the not-collected placeholder.
+    return ~type_avail | ~num_avail | is_doc | series_all_zeros(id_number)
 
 
 def id_missing_reason_checks(df: pd.DataFrame) -> list[tuple[pd.Series, str]]:
@@ -233,10 +244,12 @@ def id_missing_reason_checks(df: pd.DataFrame) -> list[tuple[pd.Series, str]]:
     type_avail = series_available(id_type)
     num_avail = series_available(id_number)
     is_doc = id_type.str.lower().eq("doc")
+    all_zeros = series_all_zeros(id_number) & num_avail
     return [
-        (is_doc, "ID type 'doc' is not a real ID type -- provide one, or leave blank to auto-generate a Civil ID."),
+        (is_doc, f"ID type 'doc' is not a real ID type -- provide one, or leave blank to set it to {NOT_COLLECTED}."),
         (~type_avail & ~is_doc, "ID type is missing."),
         (~num_avail, "ID number is missing."),
+        (all_zeros, "ID number cannot be all zeros."),
     ]
 
 
@@ -267,6 +280,7 @@ def id_reason_checks(df: pd.DataFrame) -> list[tuple[pd.Series, str]]:
         (is_national_id & ~id_number.str.fullmatch(NATIONAL_ID_REGEX, na=False),
          "National ID must contain exactly 12 digits."),
         (is_civil_id & ~number_available, "Civil ID number is required."),
+        (accepted_type & number_available & series_all_zeros(id_number), "ID number cannot be all zeros."),
         ((~accepted_type) & ~number_available,
          "ID number cannot be validated until a valid ID type is selected."),
     ]

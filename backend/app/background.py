@@ -121,17 +121,13 @@ def _advance_with_progress(job_id: str):
                 handler = pipeline.CONFIRM_HANDLERS[stage["id"]]
                 before = df.copy(deep=True)
                 df, summary = handler(df)
-                events = _append_audit_events(
-                    status, before, df, stage_id=stage["id"], fields=["ID_TYPE", "ID_NUMBER"], label="Generated",
-                    reason="Generated Civil ID assigned after the final ID validation step.",
-                    source_file="System generated", operator="System",
+                # Not written to generated_records: default_id no longer
+                # generates IDs, it only sets the not-collected placeholder.
+                _append_audit_events(
+                    status, before, df, stage_id=stage["id"], fields=["ID_TYPE", "ID_NUMBER"], label="Not collected",
+                    reason="No usable ID after the final ID validation step; set to the not-collected placeholder.",
+                    source_file="System", operator="System",
                 )
-                # Always empty here in practice -- this branch only runs when
-                # the preview count was already 0, i.e. nothing to generate --
-                # but calling it keeps this path symmetric with the manual
-                # confirm-click one in routes/stage.py, which is the one that
-                # actually produces events when there's something to generate.
-                generated_records_db.record_generated(job_id, events)
                 stage["status"] = "done"
                 status["history"].append({
                     "stage_id": stage["id"], "title": stage["title"], "summary": summary,

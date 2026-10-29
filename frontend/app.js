@@ -1542,7 +1542,7 @@ function renderDone(current) {
         <span><b>Invalid DOBs remaining</b>${(quality.invalid_dobs_remaining || 0).toLocaleString()}</span>
         <span><b>Invalid addresses remaining</b>${(quality.invalid_addresses_remaining || 0).toLocaleString()}</span>
         <span><b>Missing phones remaining</b>${(quality.missing_phones_remaining || 0).toLocaleString()}</span>
-        <span><b>Generated IDs assigned</b>${(quality.generated_ids_assigned || 0).toLocaleString()}</span>
+        <span><b>IDs not collected</b>${(quality.generated_ids_assigned || 0).toLocaleString()}</span>
       </div>
     </div>
     ${auditRows ? `

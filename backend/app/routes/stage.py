@@ -8,7 +8,7 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from .. import generated_records_db, historical_db, pipeline, store
+from .. import historical_db, pipeline, store
 from ..background import _run_in_background
 from ..helpers import (
     _append_audit_events,
@@ -478,12 +478,13 @@ def confirm_stage(job_id: str):
         handler = pipeline.CONFIRM_HANDLERS[cur["id"]]
         df, summary = handler(df)
         generated_count = int(pipeline.default_id_invalid_mask(before).sum()) if cur["id"] == "default_id" else 0
-        events = _append_audit_events(
-            st, before, df, stage_id=cur["id"], fields=["ID_TYPE", "ID_NUMBER"], label="Generated",
-            reason="Generated Civil ID assigned after the final ID validation step.",
-            source_file="System generated", operator="System",
+        # Not written to generated_records: default_id no longer generates
+        # IDs, it only sets the not-collected placeholder.
+        _append_audit_events(
+            st, before, df, stage_id=cur["id"], fields=["ID_TYPE", "ID_NUMBER"], label="Not collected",
+            reason="No usable ID after the final ID validation step; set to the not-collected placeholder.",
+            source_file="System", operator="System",
         )
-        generated_records_db.record_generated(job_id, events)
         cur["status"] = "done"
         st["history"].append({
             "stage_id": cur["id"], "title": cur["title"], "summary": summary,

@@ -81,8 +81,8 @@ def summary_raw_upload(job_id: str):
 
 
 def _write_and_get_generated_records_path(job_id: str) -> Path:
-    """Freeze this job's generated_records rows (default Civil IDs +
-    auto-filled addresses -- see generated_records_db.py) as a standalone
+    """Freeze this job's generated_records rows (auto-filled
+    addresses -- see generated_records_db.py) as a standalone
     xlsx in the job folder, same freeze-once-reuse-after shape as
     K2_Data_Audit.xlsx below. Always (re)written together with final.xlsx
     in _write_and_get_final_path -- see there -- so the two never drift out
