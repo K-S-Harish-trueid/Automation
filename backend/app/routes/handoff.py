@@ -308,6 +308,17 @@ async def apply_haider_response(
             source_file=haider_filename, operator="Haider",
         )
 
+        # --- 3b. Final DOB check: blank/invalid/no-account DOB -> NOT_COLLECTED ---
+        before_dob_check = after_haider
+        df, dob_check_summary, dob_check_counts = stage_merge.apply_final_dob_check(df)
+        after_haider = df.copy(deep=True)
+        _append_audit_events(
+            st, before_dob_check, after_haider, stage_id=cur["id"],
+            fields=stage_merge.DOB_COLS, label="Not collected",
+            reason="DOB blank, invalid, or account number missing after Haider's corrections; set to the not-collected placeholder.",
+            source_file="System", operator="System",
+        )
+
         # --- 4. Add a missing time-of-day to DOB and DATE_OPENED now that Stage 3 is fully merged ---
         # Purely additive (see stage_merge._add_missing_time_of_day): only
         # pads values that don't already carry a time component, whichever
@@ -333,7 +344,7 @@ async def apply_haider_response(
         cur["status"] = "done"
         st["history"].append({
             "stage_id": cur["id"], "title": cur["title"],
-            "summary": f"{mobile_summary} {card_summary} {haider_summary}",
+            "summary": f"{mobile_summary} {card_summary} {haider_summary} {dob_check_summary}",
             "metrics": {
                 "matched_rows": mobile_counts["mobile_matched"] + card_counts["cms_matched"],
                 "mobile_matched": mobile_counts["mobile_matched"],
@@ -341,6 +352,7 @@ async def apply_haider_response(
                 "name_matched": haider_counts["name_matched"],
                 "id_matched": haider_counts["id_matched"],
                 "dob_matched": haider_counts["dob_matched"],
+                "dob_not_collected": dob_check_counts["dob_invalid"] + dob_check_counts["dob_no_account"],
             },
             "sub_steps": [
                 {"label": "CMS Mobile Numbers",
@@ -352,6 +364,12 @@ async def apply_haider_response(
                      f"{haider_counts['name_matched']} name, "
                      f"{haider_counts['id_matched']} ID, "
                      f"{haider_counts['dob_matched']} DOB account(s) updated"
+                 )},
+                {"label": "DOB Check",
+                 "detail": (
+                     f"{dob_check_counts['dob_invalid']} blank/invalid, "
+                     f"{dob_check_counts['dob_no_account']} no account number "
+                     f"set to not collected"
                  )},
                 {"label": "DOB Timestamp Added",
                  "detail": f"{dob_padded_count} account(s) had a missing 00:00:00 time-of-day added"},
