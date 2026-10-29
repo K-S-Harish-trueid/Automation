@@ -40,7 +40,11 @@ accepted types; never checked for "doc" or an unrecognized type)
   3. Civil Id -> ID_NUMBER just needs to be "available" (see definition
      above) -- no format/length check at all.
      -> reason if missing: "Civil ID number is required."
-  4. If ID_TYPE itself is invalid/unrecognized, ID_NUMBER is reported as
+  4. Any accepted type -> an ID_NUMBER made only of zeros (e.g.
+     "000000000000", "00000000") is INVALID. Zeros inside a real number
+     (e.g. "100200300") are fine.
+     -> reason: "ID number cannot be all zeros."
+  5. If ID_TYPE itself is invalid/unrecognized, ID_NUMBER is reported as
      unverifiable.
      -> reason: "ID number cannot be validated until a valid ID type is
         selected."
@@ -84,5 +88,23 @@ ACCOUNT_NUMBER, ACCOUNT_FIRST_NAME, ACCOUNT_LAST_NAME.
 ADVANCE RULE
 Re-validates after every batch. Advances once zero rows remain flagged, or
 immediately on force_advance=true. Rows still ID-invalid when this step is
-skipped are picked up again at step 9 (final_id_check); the DOB check
-itself is NOT repeated later in the pipeline.
+skipped are picked up again at step 9 (final_id_check). The DOB check is
+repeated at the Stage 3 Haider merge -- see "DOB AT STAGE 3" below.
+
+DOB AT STAGE 3 (Haider's corrected file)
+CODE      backend/app/pipeline/stage_merge.py :: _validate_haider_dob_sheet,
+          apply_haider_corrections_response, apply_final_dob_check
+          backend/app/routes/handoff.py :: _sent_dob_accounts
+Same DOB rules as CHECK 3 above. Runs in this order:
+  1. BEFORE MERGE -- every DOB in Haider's DOB Corrections sheet is
+     checked. Blank or invalid -> XXX_NOT_COLLECTED_XXX in his data.
+     (DATE_OPENED for the age-at-opening rule comes from the job, after the
+     CMS card merge.)
+  2. MERGE -- his values (including XXX_NOT_COLLECTED_XXX) overwrite the
+     job rows, matched by ACCOUNT_NUMBER.
+  3. NOT RETURNED -- any account that was in the DOB Corrections sheet sent
+     to Haider (frozen stage2_haider.xlsx) but is missing from his response
+     -> XXX_NOT_COLLECTED_XXX.
+  4. FINAL CHECK -- every row in the job: DOB still blank/invalid, or the
+     row has no ACCOUNT_NUMBER -> XXX_NOT_COLLECTED_XXX.
+Accounts never sent to Haider (valid DOB) are kept as they are.

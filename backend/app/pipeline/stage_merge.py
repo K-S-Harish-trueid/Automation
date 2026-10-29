@@ -236,18 +236,55 @@ def validate_haider_corrections_response(sheets: dict[str, pd.DataFrame] | None)
                     missing_msg="Haider's corrected file is required")
 
 
-def apply_haider_corrections_response(df: pd.DataFrame, sheets: dict[str, pd.DataFrame]):
+def _validate_haider_dob_sheet(df: pd.DataFrame, dob_sheet: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Check every DOB in Haider's DOB sheet before it's merged: a blank or
+    invalid one (same rules as Stage 1) becomes NOT_COLLECTED, so the merge
+    writes the placeholder instead of skipping the row or applying junk.
+    DATE_OPENED comes from the job (already CMS-updated) for the
+    age-at-opening rule."""
+    from .stages.id_dob_validate import mask_dob_invalid
+    from .toolbox import NOT_COLLECTED
+    sheet = dob_sheet.copy()
+    sheet[KEY] = sheet[KEY].astype(str).str.strip()
+    opened = dict(zip(df[KEY].astype(str).str.strip(), df.get("DATE_OPENED", pd.Series("", index=df.index))))
+    check = pd.DataFrame({
+        "ACCOUNT_HOLDER_DOB": sheet["ACCOUNT_HOLDER_DOB"],
+        "DATE_OPENED": sheet[KEY].map(opened).fillna(""),
+    }, index=sheet.index)
+    already = sheet["ACCOUNT_HOLDER_DOB"].astype(str).str.strip().eq(NOT_COLLECTED)
+    invalid = mask_dob_invalid(check) & sheet[KEY].ne("")
+    sheet.loc[invalid, "ACCOUNT_HOLDER_DOB"] = NOT_COLLECTED
+    return sheet, int((invalid & ~already).sum())
+
+
+def apply_haider_corrections_response(
+    df: pd.DataFrame, sheets: dict[str, pd.DataFrame], sent_dob_accounts: set[str] | None = None,
+):
     """Merge Name Validation, ID Corrections, and DOB Corrections sheets from
-    Haider's corrected workbook into df."""
+    Haider's corrected workbook into df. DOBs in his sheet are validated
+    first (_validate_haider_dob_sheet); any account in `sent_dob_accounts`
+    (the DOB Corrections sheet sent to him) that he didn't send back is set
+    to NOT_COLLECTED."""
+    from .toolbox import NOT_COLLECTED
     validate_haider_corrections_response(sheets)
     name_matched = _overwrite_nonblank(df, sheets[SHEET_NAME_VALIDATE], NAME_COLS)
     id_matched = _overwrite_nonblank(df, sheets[SHEET_ID_CORRECTIONS], ID_COLS)
-    dob_matched = _overwrite_nonblank(df, sheets[SHEET_DOB_CORRECTIONS], DOB_COLS)
+    dob_sheet, dob_haider_invalid = _validate_haider_dob_sheet(df, sheets[SHEET_DOB_CORRECTIONS])
+    dob_matched = _overwrite_nonblank(df, dob_sheet, DOB_COLS)
+    returned = set(dob_sheet.loc[dob_sheet[KEY].ne(""), KEY])
+    not_returned = df[KEY].isin(set(sent_dob_accounts or ()) - returned)
+    df.loc[not_returned, "ACCOUNT_HOLDER_DOB"] = NOT_COLLECTED
+    dob_not_returned = int(not_returned.sum())
     summary = (
         f"Applied Haider's corrections: {name_matched} name, "
-        f"{id_matched} ID, {dob_matched} DOB account(s) updated."
+        f"{id_matched} ID, {dob_matched} DOB account(s) updated "
+        f"({dob_haider_invalid} of Haider's DOBs blank/invalid and {dob_not_returned} sent but "
+        f"not returned set to {NOT_COLLECTED})."
     )
-    counts = {"name_matched": name_matched, "id_matched": id_matched, "dob_matched": dob_matched}
+    counts = {
+        "name_matched": name_matched, "id_matched": id_matched, "dob_matched": dob_matched,
+        "dob_haider_invalid": dob_haider_invalid, "dob_not_returned": dob_not_returned,
+    }
     return df, summary, counts
 
 

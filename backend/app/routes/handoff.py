@@ -222,6 +222,19 @@ def summary_stage2_haider(job_id: str):
 
 # ---- Stage 3: three-file input -> merge -> (final_id_check/default_id) -----
 
+def _sent_dob_accounts(job_id: str, df: pd.DataFrame) -> set[str]:
+    """Accounts in the DOB Corrections sheet of the Stage 2 file sent to
+    Haider. Read from the frozen stage2_haider.xlsx; if it was never frozen,
+    recomputed from the pre-merge df (same mask the file is built from)."""
+    path = store.JOBS_DIR / job_id / "stage2_haider.xlsx"
+    if path.exists():
+        sent = pd.read_excel(path, sheet_name=stage_merge.SHEET_DOB_CORRECTIONS, dtype=str, engine="calamine")
+        accounts = sent[stage_merge.KEY]
+    else:
+        accounts = df.loc[pipeline.mask_dob_invalid(df), stage_merge.KEY]
+    return set(accounts.fillna("").astype(str).str.strip()) - {""}
+
+
 @router.post("/api/jobs/{job_id}/stage3/haider-response")
 async def apply_haider_response(
     job_id: str,
@@ -262,6 +275,7 @@ async def apply_haider_response(
         df = store.get_df(job_id)
         st = store.get_status(job_id)
         cur = _current_stage(st)
+        sent_dob_accounts = _sent_dob_accounts(job_id, df)
 
         # --- 1. Apply CMS Mobile Numbers ---
         _report_sub_step(job_id, st, cur, "Applying CMS Mobile Numbers…", sub_step=0, sub_total=4)
@@ -299,7 +313,9 @@ async def apply_haider_response(
         # --- 3. Apply Haider's corrected file ---
         _report_sub_step(job_id, st, cur, "Applying Haider's corrections…", sub_step=2, sub_total=4)
         before_haider = after_card.copy(deep=True)
-        df, haider_summary, haider_counts = stage_merge.apply_haider_corrections_response(df, haider_sheets)
+        df, haider_summary, haider_counts = stage_merge.apply_haider_corrections_response(
+            df, haider_sheets, sent_dob_accounts,
+        )
         after_haider = df.copy(deep=True)
         _append_audit_events(
             st, before_haider, after_haider, stage_id=cur["id"],
@@ -352,7 +368,10 @@ async def apply_haider_response(
                 "name_matched": haider_counts["name_matched"],
                 "id_matched": haider_counts["id_matched"],
                 "dob_matched": haider_counts["dob_matched"],
-                "dob_not_collected": dob_check_counts["dob_invalid"] + dob_check_counts["dob_no_account"],
+                "dob_not_collected": (
+                    haider_counts["dob_haider_invalid"] + haider_counts["dob_not_returned"]
+                    + dob_check_counts["dob_invalid"] + dob_check_counts["dob_no_account"]
+                ),
             },
             "sub_steps": [
                 {"label": "CMS Mobile Numbers",
@@ -364,6 +383,11 @@ async def apply_haider_response(
                      f"{haider_counts['name_matched']} name, "
                      f"{haider_counts['id_matched']} ID, "
                      f"{haider_counts['dob_matched']} DOB account(s) updated"
+                 )},
+                {"label": "Haider DOB Check",
+                 "detail": (
+                     f"{haider_counts['dob_haider_invalid']} blank/invalid in Haider's file, "
+                     f"{haider_counts['dob_not_returned']} sent but not returned set to not collected"
                  )},
                 {"label": "DOB Check",
                  "detail": (

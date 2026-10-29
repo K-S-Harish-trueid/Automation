@@ -20,6 +20,7 @@ CONSTRAINTS -- identical ID_TYPE / ID_NUMBER logic as step 5
      characters, starts with a letter).
   3. National Id ID_NUMBER must fullmatch \d{12} (exactly 12 digits).
   4. Civil Id ID_NUMBER just needs to be present/non-placeholder.
+  5. An ID_NUMBER made only of zeros is invalid for every type.
 
 EDITABLE FIELDS
 ID_TYPE, ID_NUMBER.
@@ -30,4 +31,5 @@ ACCOUNT_NUMBER, ACCOUNT_FIRST_NAME, ACCOUNT_LAST_NAME.
 ADVANCE RULE
 Re-validates after every batch. Advances once zero rows remain flagged, or
 immediately on force_advance=true. Any row still ID-invalid when this step
-ends is handed to step 10 (default_id) for an auto-generated ID.
+ends is handed to step 10 (default_id), which sets ID_TYPE and ID_NUMBER
+to XXX_NOT_COLLECTED_XXX (no ID is generated).

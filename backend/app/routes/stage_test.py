@@ -52,7 +52,8 @@ _RULES_PANELS = {
         "points": [
             "ID_TYPE is Passport / National Id / Civil Id -- \"doc\" and anything else fails",
             "ID_NUMBER matches that type's format -- Passport: 8-9 chars starting with a letter, "
-            "National Id: exactly 12 digits, Civil Id: just needs to be present",
+            "National Id: exactly 12 digits, Civil Id: just needs to be present. "
+            "An ID_NUMBER made only of zeros fails for every type",
             "ACCOUNT_HOLDER_DOB is a real date, after year 1905, and the customer was 18+ "
             "when DATE_OPENED happened (falls back to today's age if DATE_OPENED can't be read)",
         ],
@@ -87,8 +88,10 @@ _RULES_PANELS = {
         "points": [
             "ID_TYPE must be Passport / National Id / Civil Id",
             "ID_NUMBER must match that type's format (same rules as Missing ID & DoB)",
+            "ID_NUMBER made only of zeros is invalid",
         ],
-        "note": None,
+        "note": "Still invalid after this step -> ID_TYPE and ID_NUMBER set to "
+                "XXX_NOT_COLLECTED_XXX (no ID is generated).",
     },
 }
 
