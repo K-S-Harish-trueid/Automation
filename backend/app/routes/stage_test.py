@@ -55,7 +55,7 @@ _RULES_PANELS = {
             "National Id: exactly 12 digits, Civil Id: just needs to be present. "
             "An ID_NUMBER made only of zeros fails for every type",
             "ACCOUNT_HOLDER_DOB is a real date, after 1 January 1900, not in the future, and the "
-            "customer is 18+ today (the 18+ at DATE_OPENED check is switched off for now)",
+            "customer is 18+",
         ],
         "note": None,
     },
@@ -110,7 +110,7 @@ def _testable_stages() -> dict:
     }
     # DATE_OPENED isn't reviewer-editable (it's account metadata, not
     # something a reviewer corrects, so it's not in editable_cols), but the
-    # DOB check now needs it to test the age-at-opening rule -- added here
+    # DOB check uses it (an opening date in the future marks the DOB invalid) -- added here
     # for the sandbox only.
     stages["id_dob_validate"]["fields"] = [*stages["id_dob_validate"]["fields"], "DATE_OPENED"]
     stages["address_fix"] = {
