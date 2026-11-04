@@ -95,7 +95,7 @@ repeated at the Stage 3 Haider merge -- see "DOB AT STAGE 3" below.
 DOB AT STAGE 3 (Haider's corrected file)
 CODE      backend/app/pipeline/stage_merge.py :: _validate_haider_dob_sheet,
           apply_haider_corrections_response, apply_cms_card_response
-          backend/app/routes/handoff.py :: _sent_dob_accounts
+          backend/app/routes/handoff.py :: _sent_accounts
 Only Haider's DOB sheet is checked at Stage 3 -- rows that were never sent
 to him already passed Stages 1-2 and are kept exactly as they are.
   1. NOT SENT -- kept as is, no check.
@@ -112,6 +112,21 @@ to him already passed Stages 1-2 and are kept exactly as they are.
 Audit: Haider's real DOB corrections are labelled "Haider corrected"; DOBs
 set to the placeholder in 2/3 are labelled "Not collected".
 Stages 1-2 still flag a pre-1905 DOB, so it is still sent to Naresh/Haider.
+
+NAMES AND IDS AT STAGE 3 (Haider's corrected file)
+CODE      backend/app/pipeline/stage_merge.py :: _fill_sent_blanks,
+          apply_haider_corrections_response
+          backend/app/routes/handoff.py :: _sent_accounts
+Only accounts in the Name Validation / ID Corrections sheets of the frozen
+stage2_haider.xlsx are affected. Rows never sent are kept as they are.
+  1. NAMES -- his value is used. A name cell he left blank, or a row he
+     didn't send back (all 3 names) -> XXX_NOT_COLLECTED_XXX.
+  2. IDS -- his values are used, NO format check. ID_TYPE or ID_NUMBER
+     blank, or the row not sent back -> BOTH set to XXX_NOT_COLLECTED_XXX.
+  3. A row Haider returns that wasn't sent keeps the old rule: blank =
+     keep the current value.
+Audit: real corrections are labelled "Haider corrected"; values set to the
+placeholder are labelled "Not collected" (operator System).
 
 CMS DATE_OPENED IN THE FUTURE (Stage 3, CMS Card Details)
 A DATE_OPENED from the CMS card file that is in the future is applied as

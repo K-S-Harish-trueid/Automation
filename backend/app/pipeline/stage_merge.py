@@ -274,19 +274,49 @@ def _validate_haider_dob_sheet(df: pd.DataFrame, dob_sheet: pd.DataFrame) -> tup
     return sheet, int((invalid & ~already).sum())
 
 
+def _fill_sent_blanks(sheet: pd.DataFrame, columns: list[str], sent: set[str] | None,
+                      whole_row: bool = False) -> tuple[pd.DataFrame, int]:
+    """For accounts we sent Haider in this sheet: a row he didn't send back,
+    or a blank cell in a row he did, becomes NOT_COLLECTED (whole_row: any
+    blank cell makes every column NOT_COLLECTED -- used for the ID_TYPE/
+    ID_NUMBER pair). Rows we never sent keep the usual blank = keep meaning.
+    No format check on what he filled in. Returns the sheet and the number
+    of sent accounts that got at least one placeholder."""
+    from .toolbox import NOT_COLLECTED
+    sheet = sheet[[KEY, *columns]].copy()
+    sheet[KEY] = sheet[KEY].fillna("").astype(str).str.strip()
+    sheet = sheet[sheet[KEY].ne("")].drop_duplicates(subset=[KEY], keep="first")
+    sent = set(sent or ())
+    missing = sorted(sent - set(sheet[KEY]))
+    if missing:
+        sheet = pd.concat([sheet, pd.DataFrame({KEY: missing, **{c: "" for c in columns}})], ignore_index=True)
+    is_sent = sheet[KEY].isin(sent)
+    blank = sheet[columns].fillna("").astype(str).apply(lambda s: s.str.strip().eq(""))
+    if whole_row:
+        blank[:] = blank.any(axis=1).to_numpy()[:, None]
+    blank = blank & is_sent.to_numpy()[:, None]
+    for col in columns:
+        sheet.loc[blank[col], col] = NOT_COLLECTED
+    return sheet, int(blank.any(axis=1).sum())
+
+
 def apply_haider_corrections_response(
     df: pd.DataFrame, sheets: dict[str, pd.DataFrame], sent_dob_accounts: set[str] | None = None,
+    sent_name_accounts: set[str] | None = None, sent_id_accounts: set[str] | None = None,
 ):
     """Merge Name Validation, ID Corrections, and DOB Corrections sheets from
-    Haider's corrected workbook into df. DOBs in his sheet are validated
-    first (_validate_haider_dob_sheet); any account in `sent_dob_accounts`
-    (the DOB Corrections sheet sent to him) that he didn't send back is set
-    to NOT_COLLECTED, whatever the reason it was sent. Rows never sent are
-    not checked here at all -- they already passed Stages 1-2."""
+    Haider's corrected workbook into df. For every account sent to him in a
+    sheet, a value he left blank or a row he didn't send back becomes
+    NOT_COLLECTED (_fill_sent_blanks for names/IDs; DOBs are also validated
+    first, _validate_haider_dob_sheet). Rows never sent are not checked here
+    at all -- they already passed Stages 1-2."""
     from .toolbox import NOT_COLLECTED
     validate_haider_corrections_response(sheets)
-    name_matched = _overwrite_nonblank(df, sheets[SHEET_NAME_VALIDATE], NAME_COLS)
-    id_matched = _overwrite_nonblank(df, sheets[SHEET_ID_CORRECTIONS], ID_COLS)
+    name_sheet, name_not_collected = _fill_sent_blanks(sheets[SHEET_NAME_VALIDATE], NAME_COLS, sent_name_accounts)
+    id_sheet, id_not_collected = _fill_sent_blanks(sheets[SHEET_ID_CORRECTIONS], ID_COLS, sent_id_accounts,
+                                                   whole_row=True)
+    name_matched = _overwrite_nonblank(df, name_sheet, NAME_COLS)
+    id_matched = _overwrite_nonblank(df, id_sheet, ID_COLS)
     dob_sheet, dob_haider_invalid = _validate_haider_dob_sheet(df, sheets[SHEET_DOB_CORRECTIONS])
     dob_matched = _overwrite_nonblank(df, dob_sheet, DOB_COLS)
     returned = set(dob_sheet.loc[dob_sheet[KEY].ne(""), KEY])
@@ -297,21 +327,30 @@ def apply_haider_corrections_response(
         f"Applied Haider's corrections: {name_matched} name, "
         f"{id_matched} ID, {dob_matched} DOB account(s) updated "
         f"({dob_haider_invalid} of Haider's DOBs blank/invalid and {dob_not_returned} sent but "
-        f"not returned set to {NOT_COLLECTED})."
+        f"not returned set to {NOT_COLLECTED}; {name_not_collected} name and {id_not_collected} ID "
+        f"account(s) blank or not returned set to {NOT_COLLECTED})."
     )
     counts = {
         "name_matched": name_matched, "id_matched": id_matched, "dob_matched": dob_matched,
         "dob_haider_invalid": dob_haider_invalid, "dob_not_returned": dob_not_returned,
+        "name_not_collected": name_not_collected, "id_not_collected": id_not_collected,
     }
     return df, summary, counts
 
 
-def dob_not_collected_mask(before: pd.DataFrame, after: pd.DataFrame) -> pd.Series:
-    """Rows whose DOB was turned into NOT_COLLECTED between before/after --
-    used to label those audit events "Not collected" instead of "Haider
-    corrected"."""
+def not_collected_mask(before: pd.DataFrame, after: pd.DataFrame, columns: list[str]) -> pd.Series:
+    """Rows where any of `columns` was turned into NOT_COLLECTED between
+    before/after -- used to label those audit events "Not collected" instead
+    of "Haider corrected"."""
     from .toolbox import NOT_COLLECTED
-    new = after["ACCOUNT_HOLDER_DOB"].astype(str).str.strip()
-    old = before["ACCOUNT_HOLDER_DOB"].astype(str).str.strip()
-    return new.eq(NOT_COLLECTED) & old.ne(NOT_COLLECTED)
+    mask = pd.Series(False, index=after.index)
+    for col in columns:
+        new = after[col].astype(str).str.strip()
+        old = before[col].astype(str).str.strip()
+        mask |= new.eq(NOT_COLLECTED) & old.ne(NOT_COLLECTED)
+    return mask
+
+
+def dob_not_collected_mask(before: pd.DataFrame, after: pd.DataFrame) -> pd.Series:
+    return not_collected_mask(before, after, DOB_COLS)
 

@@ -145,16 +145,20 @@ _GATES = {
             "1. CMS Mobile Numbers: phone merged; blank or all-zero phone -> XXX_NOT_COLLECTED_XXX.",
             "2. CMS Card Details: card fields and DATE_OPENED merged. A DATE_OPENED in the future is applied "
             "but warned in the summary and labelled 'CMS warning' in the audit.",
-            "3. Haider's corrections: names and IDs merged (non-blank only).",
+            "3. Haider's corrections, only for accounts we sent him; rows never sent are kept as they are:",
+            "  - Names: his value is used. A name he left blank, or a row he didn't return -> XXX_NOT_COLLECTED_XXX.",
+            "  - IDs: his values are used, no format check. ID_TYPE or ID_NUMBER blank, or the row not returned "
+            "-> both XXX_NOT_COLLECTED_XXX.",
             "DOB, only rows in Haider's DOB sheet are checked; rows never sent are kept as they are:",
             "  - Haider gave a value: checked with every DOB rule except the DOB cutoff (a pre-cutoff date is accepted). "
             "Valid -> used; blank or invalid -> XXX_NOT_COLLECTED_XXX.",
             "  - Sent to Haider but not returned -> XXX_NOT_COLLECTED_XXX, whatever the reason it was sent.",
             "4. A missing 00:00:00 time is added to real DOB and DATE_OPENED values.",
         ],
-        "code": ["routes/handoff.py :: apply_haider_response, _sent_dob_accounts",
+        "code": ["routes/handoff.py :: apply_haider_response, _sent_accounts",
                  "stage_merge.py :: apply_cms_mobile_response, apply_cms_card_response, "
-                 "apply_haider_corrections_response, _validate_haider_dob_sheet, normalise_dob_timestamp"],
+                 "apply_haider_corrections_response, _fill_sent_blanks, _validate_haider_dob_sheet, "
+                 "normalise_dob_timestamp"],
         "doc": "rules/05-id_dob_validate.txt (DOB AT STAGE 3)",
     },
 }

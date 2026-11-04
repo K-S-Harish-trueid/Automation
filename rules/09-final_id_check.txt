@@ -1,26 +1,25 @@
 STEP 9 -- final_id_check ("Final ID Validation")
 ================================================================================
-TYPE      manual_edit (pages 200 flagged rows at a time)
-CODE      backend/app/pipeline/stages/final_id_check.py :: mask_id_only_invalid,
-          validation_reasons_id_only
-          backend/app/pipeline/toolbox.py :: compute_id_validity, id_reason_checks
-          (shared with id_dob_validate/default_id)
+TYPE      manual_edit (pages 200 flagged rows at a time; skipped while
+          BYPASS_MANUAL_EDIT_STAGES is on)
+CODE      backend/app/pipeline/stages/final_id_check.py :: final_id_check_invalid_mask
+          backend/app/pipeline/toolbox.py :: id_missing_mask
+          (shared with default_id)
 
 WHAT IT DOES
-One last pass at IDs, for rows that were force-advanced past step 5, or
-whose ID fields were changed since then by the step-2 override or the
-step-8 CMS merge. DOB is NOT re-checked here -- that's step 5 only.
+Last ID check after Haider's reply has been merged. DOB is NOT re-checked
+here.
 
-CONSTRAINTS -- identical ID_TYPE / ID_NUMBER logic as step 5
-(id_dob_validate), see that file for the full breakdown. Summary:
-  1. ID_TYPE must be Passport / National Id ("nid"/"nationalid" also
-     accepted) / Civil Id ("civilid"/"civil_id" also accepted); "doc" and
-     anything else is invalid.
-  2. Passport ID_NUMBER must fullmatch [A-Za-z][A-Za-z0-9]{7,8} (8-9
-     characters, starts with a letter).
-  3. National Id ID_NUMBER must fullmatch \d{12} (exactly 12 digits).
-  4. Civil Id ID_NUMBER just needs to be present/non-placeholder.
-  5. An ID_NUMBER made only of zeros is invalid for every type.
+NO FORMAT CHECK. Whatever ID Haider filled in is accepted as final, even if
+it doesn't match the Passport / National Id format from step 5. An ID only
+counts as missing when:
+  1. ID_TYPE or ID_NUMBER is blank (or already XXX_NOT_COLLECTED_XXX).
+  2. ID_TYPE is "doc".
+  3. ID_NUMBER is made only of zeros.
+
+IDs that were sent to Haider and that he left blank or didn't return are
+already set to XXX_NOT_COLLECTED_XXX when his file is merged (see
+05-id_dob_validate.txt, "NAMES AND IDS AT STAGE 3").
 
 EDITABLE FIELDS
 ID_TYPE, ID_NUMBER.
@@ -30,6 +29,6 @@ ACCOUNT_NUMBER, ACCOUNT_FIRST_NAME, ACCOUNT_LAST_NAME.
 
 ADVANCE RULE
 Re-validates after every batch. Advances once zero rows remain flagged, or
-immediately on force_advance=true. Any row still ID-invalid when this step
-ends is handed to step 10 (default_id), which sets ID_TYPE and ID_NUMBER
-to XXX_NOT_COLLECTED_XXX (no ID is generated).
+immediately on force_advance=true. Any row still missing an ID when this
+step ends is handed to step 10 (default_id), which sets ID_TYPE and
+ID_NUMBER to XXX_NOT_COLLECTED_XXX (no ID is generated).

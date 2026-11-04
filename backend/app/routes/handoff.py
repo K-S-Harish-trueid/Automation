@@ -222,16 +222,16 @@ def summary_stage2_haider(job_id: str):
 
 # ---- Stage 3: three-file input -> merge -> (final_id_check/default_id) -----
 
-def _sent_dob_accounts(job_id: str, df: pd.DataFrame) -> set[str]:
-    """Accounts in the DOB Corrections sheet of the Stage 2 file sent to
-    Haider. Read from the frozen stage2_haider.xlsx; if it was never frozen,
-    recomputed from the pre-merge df (same mask the file is built from)."""
+def _sent_accounts(job_id: str, df: pd.DataFrame, sheet: str, fallback_mask) -> set[str]:
+    """Accounts in one sheet of the Stage 2 file sent to Haider. Read from
+    the frozen stage2_haider.xlsx; if it was never frozen, recomputed from
+    the pre-merge df (same mask the sheet is built from)."""
     path = store.JOBS_DIR / job_id / "stage2_haider.xlsx"
     if path.exists():
-        sent = pd.read_excel(path, sheet_name=stage_merge.SHEET_DOB_CORRECTIONS, dtype=str, engine="calamine")
+        sent = pd.read_excel(path, sheet_name=sheet, dtype=str, engine="calamine")
         accounts = sent[stage_merge.KEY]
     else:
-        accounts = df.loc[pipeline.mask_dob_invalid(df), stage_merge.KEY]
+        accounts = df.loc[fallback_mask(df), stage_merge.KEY]
     return set(accounts.fillna("").astype(str).str.strip()) - {""}
 
 
@@ -275,7 +275,9 @@ async def apply_haider_response(
         df = store.get_df(job_id)
         st = store.get_status(job_id)
         cur = _current_stage(st)
-        sent_dob_accounts = _sent_dob_accounts(job_id, df)
+        sent_dob_accounts = _sent_accounts(job_id, df, stage_merge.SHEET_DOB_CORRECTIONS, pipeline.mask_dob_invalid)
+        sent_name_accounts = _sent_accounts(job_id, df, stage_merge.SHEET_NAME_VALIDATE, pipeline.mask_name_invalid)
+        sent_id_accounts = _sent_accounts(job_id, df, stage_merge.SHEET_ID_CORRECTIONS, pipeline.mask_id_only_invalid)
 
         # --- 1. Apply CMS Mobile Numbers ---
         _report_sub_step(job_id, st, cur, "Applying CMS Mobile Numbers…", sub_step=0, sub_total=4)
@@ -324,15 +326,26 @@ async def apply_haider_response(
         _report_sub_step(job_id, st, cur, "Applying Haider's corrections…", sub_step=2, sub_total=4)
         before_haider = after_card.copy(deep=True)
         df, haider_summary, haider_counts = stage_merge.apply_haider_corrections_response(
-            df, haider_sheets, sent_dob_accounts,
+            df, haider_sheets, sent_dob_accounts, sent_name_accounts, sent_id_accounts,
         )
         after_haider = df.copy(deep=True)
-        _append_audit_events(
-            st, before_haider, after_haider, stage_id=cur["id"],
-            fields=[*stage_merge.NAME_COLS, *stage_merge.ID_COLS],
-            label="Haider corrected", reason="Correction supplied by Haider's response.",
-            source_file=haider_filename, operator="Haider",
-        )
+        # Names/IDs: Haider's real corrections vs. values set to the
+        # placeholder because he left them blank or didn't return the row.
+        for col in [*stage_merge.NAME_COLS, *stage_merge.ID_COLS]:
+            col_nc = stage_merge.not_collected_mask(before_haider, after_haider, [col])
+            _append_audit_events(
+                st, before_haider[~col_nc], after_haider[~col_nc], stage_id=cur["id"],
+                fields=[col],
+                label="Haider corrected", reason="Correction supplied by Haider's response.",
+                source_file=haider_filename, operator="Haider",
+            )
+            _append_audit_events(
+                st, before_haider[col_nc], after_haider[col_nc], stage_id=cur["id"],
+                fields=[col], label="Not collected",
+                reason="Sent to Haider for correction; he left it blank or didn't return the row. "
+                       "Set to the not-collected placeholder.",
+                source_file=haider_filename, operator="System",
+            )
         # DOB: Haider's real corrections vs. DOBs set to the placeholder
         # because his value was blank/invalid or the row wasn't returned.
         dob_nc = stage_merge.dob_not_collected_mask(before_haider, after_haider)
@@ -384,6 +397,8 @@ async def apply_haider_response(
                 "id_matched": haider_counts["id_matched"],
                 "dob_matched": haider_counts["dob_matched"],
                 "dob_not_collected": haider_counts["dob_haider_invalid"] + haider_counts["dob_not_returned"],
+                "name_not_collected": haider_counts["name_not_collected"],
+                "id_not_collected": haider_counts["id_not_collected"],
                 "cms_future_date_opened": card_counts["future_date_opened"],
             },
             "sub_steps": [
@@ -403,6 +418,11 @@ async def apply_haider_response(
                  "detail": (
                      f"{haider_counts['dob_haider_invalid']} blank/invalid in Haider's file, "
                      f"{haider_counts['dob_not_returned']} sent but not returned set to not collected"
+                 )},
+                {"label": "Haider Name/ID Check",
+                 "detail": (
+                     f"{haider_counts['name_not_collected']} name and {haider_counts['id_not_collected']} ID "
+                     f"account(s) blank or not returned set to not collected"
                  )},
                 {"label": "DOB Timestamp Added",
                  "detail": f"{dob_padded_count} account(s) had a missing 00:00:00 time-of-day added"},

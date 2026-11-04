@@ -85,14 +85,14 @@ _RULES_PANELS = {
         "note": None,
     },
     "final_id_check": {
-        "intro": "Same ID_TYPE/ID_NUMBER rule as Missing ID & DoB (DOB is NOT re-checked here):",
+        "intro": "Runs after Haider's reply. Format is NOT checked here; an ID counts as missing only when:",
         "points": [
-            "ID_TYPE must be Passport / National Id / Civil Id",
-            "ID_NUMBER must match that type's format (same rules as Missing ID & DoB)",
-            "ID_NUMBER made only of zeros is invalid",
+            "ID_TYPE or ID_NUMBER is blank (or already XXX_NOT_COLLECTED_XXX)",
+            "ID_TYPE is 'doc'",
+            "ID_NUMBER is made only of zeros",
         ],
-        "note": "Still invalid after this step -> ID_TYPE and ID_NUMBER set to "
-                "XXX_NOT_COLLECTED_XXX (no ID is generated).",
+        "note": "Missing -> ID_TYPE and ID_NUMBER both set to XXX_NOT_COLLECTED_XXX (no ID is generated). "
+                "IDs sent to Haider that he left blank or didn't return are already set to it when his file is merged.",
     },
 }
 
