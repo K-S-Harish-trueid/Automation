@@ -9,6 +9,7 @@ Every merge here matches by ACCOUNT_NUMBER (string-stripped) and only
 overwrites a cell where the response actually provides a non-blank value --
 partial completion is expected (a reviewer won't fix every row), so a blank
 cell means "leave the current value alone", never "clear it"."""
+import numpy as np
 import pandas as pd
 
 from .stages.cms_integration import CMS_UPDATE_COLS
@@ -290,13 +291,16 @@ def _fill_sent_blanks(sheet: pd.DataFrame, columns: list[str], sent: set[str] | 
     missing = sorted(sent - set(sheet[KEY]))
     if missing:
         sheet = pd.concat([sheet, pd.DataFrame({KEY: missing, **{c: "" for c in columns}})], ignore_index=True)
-    is_sent = sheet[KEY].isin(sent)
-    blank = sheet[columns].fillna("").astype(str).apply(lambda s: s.str.strip().eq(""))
+    # Plain bool numpy mask (rows x columns): on an empty sheet a DataFrame
+    # .apply() comes back as str dtype and can't be &-ed with bools.
+    blank = np.column_stack(
+        [sheet[c].fillna("").astype(str).str.strip().eq("").to_numpy(dtype=bool) for c in columns]
+    ).reshape(len(sheet), len(columns))
     if whole_row:
-        blank[:] = blank.any(axis=1).to_numpy()[:, None]
-    blank = blank & is_sent.to_numpy()[:, None]
-    for col in columns:
-        sheet.loc[blank[col], col] = NOT_COLLECTED
+        blank = np.repeat(blank.any(axis=1, keepdims=True), len(columns), axis=1)
+    blank &= sheet[KEY].isin(sent).to_numpy(dtype=bool)[:, None]
+    for i, col in enumerate(columns):
+        sheet.loc[blank[:, i], col] = NOT_COLLECTED
     return sheet, int(blank.any(axis=1).sum())
 
 
