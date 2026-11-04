@@ -67,9 +67,10 @@ def _env_positive_int(name: str, default: int) -> int:
 
 # id_dob_validate.py: any DOB on/before this date is treated as a
 # placeholder, not a real birthdate.
-DOB_CUTOFF = _env_date("DOB_CUTOFF_DATE", "1905-01-01")
+DOB_CUTOFF = _env_date("DOB_CUTOFF_DATE", "1900-01-01")
 
-# id_dob_validate.py: age (both today and at DATE_OPENED) must be >= this.
+# id_dob_validate.py: age (today) must be >= this. The age-at-DATE_OPENED
+# check is switched off for now (see compute_dob_validity).
 AGE_OF_MAJORITY = _env_int("AGE_OF_MAJORITY", 18)
 
 # name_validate.py: a first/middle/last name that's exactly this many

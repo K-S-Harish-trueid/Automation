@@ -3,8 +3,8 @@ import pandas as pd
 from ...rules_config import AGE_OF_MAJORITY, DOB_CUTOFF
 from ..toolbox import _reasons_by_row, _s, compute_id_validity, id_reason_checks, parse_dob_series, series_available
 
-# The default/placeholder DOB is 1 Jan 1905 -- per requirement, any DOB after
-# this exact date is valid (so e.g. 1905-02-01 is fine), only this date
+# The default/placeholder DOB is 1 Jan 1900 -- per requirement, any DOB after
+# this exact date is valid (so e.g. 1900-02-01 is fine), only this date
 # itself or anything earlier is treated as a non-real DOB. Configurable via
 # DOB_CUTOFF_DATE in .env -- see rules_config.py.
 DEFAULT_DOB_CUTOFF = DOB_CUTOFF
@@ -64,10 +64,14 @@ def compute_dob_validity(df: pd.DataFrame) -> pd.Series:
     opened_parsed = _opened_parsed(df)
     not_future_opened = opened_parsed.isna() | (opened_parsed <= today)
     is_adult_now = _age_years_now(parsed) >= AGE_OF_MAJORITY
-    is_adult_at_opening = _age_years_at_opening(df, parsed) >= AGE_OF_MAJORITY
+    # Age-at-opening check switched off by management decision (Nov 2026):
+    # customers who were minors when the account was opened keep their DOB.
+    # To turn it back on, uncomment these lines and the matching reason in
+    # _dob_reason_checks below.
+    # is_adult_at_opening = _age_years_at_opening(df, parsed) >= AGE_OF_MAJORITY
     return (
         avail & valid_format & after_cutoff & not_future_dob & not_future_opened
-        & is_adult_now & is_adult_at_opening
+        & is_adult_now  # & is_adult_at_opening
     ).fillna(False)
 
 
@@ -87,7 +91,7 @@ def _dob_reason_checks(df: pd.DataFrame, dob: pd.Series, parsed: pd.Series) -> l
     dob_available = series_available(dob)
     today = pd.Timestamp.today()
     age_now = _age_years_now(parsed)
-    age_at_opening = _age_years_at_opening(df, parsed)
+    # age_at_opening = _age_years_at_opening(df, parsed)  # check switched off, see compute_dob_validity
     opened_parsed = _opened_parsed(df)
     # A DOB that's missing/unparseable/before-cutoff/in-the-future is its own
     # distinct problem -- gate every check below it on the DOB itself being a
@@ -115,8 +119,9 @@ def _dob_reason_checks(df: pd.DataFrame, dob: pd.Series, parsed: pd.Series) -> l
         # these two reasons, not both, for what's really one underlying age
         # problem.
         (sane_dob & age_now.lt(AGE_OF_MAJORITY), f"Customer is currently under {AGE_OF_MAJORITY}."),
-        (sane_dob & age_now.ge(AGE_OF_MAJORITY) & age_at_opening.lt(AGE_OF_MAJORITY),
-         f"Customer was under {AGE_OF_MAJORITY} when the account was opened."),
+        # Switched off with the age-at-opening check in compute_dob_validity:
+        # (sane_dob & age_now.ge(AGE_OF_MAJORITY) & age_at_opening.lt(AGE_OF_MAJORITY),
+        #  f"Customer was under {AGE_OF_MAJORITY} when the account was opened."),
     ]
 
 
