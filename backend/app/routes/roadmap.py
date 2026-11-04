@@ -146,7 +146,8 @@ _GATES = {
             "2. CMS Card Details: card fields and DATE_OPENED merged. A DATE_OPENED in the future is applied "
             "but warned in the summary and labelled 'CMS warning' in the audit.",
             "3. Haider's corrections, only for accounts we sent him; rows never sent are kept as they are:",
-            "  - Names: his value is used. A name he left blank, or a row he didn't return -> XXX_NOT_COLLECTED_XXX.",
+            "  - Names: his values are used. Any of the 3 names left blank, or the row not returned "
+            "-> all 3 (first, middle, last) XXX_NOT_COLLECTED_XXX.",
             "  - IDs: his values are used, no format check. ID_TYPE or ID_NUMBER blank, or the row not returned "
             "-> both XXX_NOT_COLLECTED_XXX.",
             "DOB, only rows in Haider's DOB sheet are checked; rows never sent are kept as they are:",

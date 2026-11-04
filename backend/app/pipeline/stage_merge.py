@@ -279,8 +279,9 @@ def _fill_sent_blanks(sheet: pd.DataFrame, columns: list[str], sent: set[str] | 
                       whole_row: bool = False) -> tuple[pd.DataFrame, int]:
     """For accounts we sent Haider in this sheet: a row he didn't send back,
     or a blank cell in a row he did, becomes NOT_COLLECTED (whole_row: any
-    blank cell makes every column NOT_COLLECTED -- used for the ID_TYPE/
-    ID_NUMBER pair). Rows we never sent keep the usual blank = keep meaning.
+    blank cell makes every column NOT_COLLECTED -- used for the 3 names and
+    the ID_TYPE/ID_NUMBER pair). Rows we never sent keep the usual blank =
+    keep meaning.
     No format check on what he filled in. Returns the sheet and the number
     of sent accounts that got at least one placeholder."""
     from .toolbox import NOT_COLLECTED
@@ -316,7 +317,8 @@ def apply_haider_corrections_response(
     at all -- they already passed Stages 1-2."""
     from .toolbox import NOT_COLLECTED
     validate_haider_corrections_response(sheets)
-    name_sheet, name_not_collected = _fill_sent_blanks(sheets[SHEET_NAME_VALIDATE], NAME_COLS, sent_name_accounts)
+    name_sheet, name_not_collected = _fill_sent_blanks(sheets[SHEET_NAME_VALIDATE], NAME_COLS, sent_name_accounts,
+                                                       whole_row=True)
     id_sheet, id_not_collected = _fill_sent_blanks(sheets[SHEET_ID_CORRECTIONS], ID_COLS, sent_id_accounts,
                                                    whole_row=True)
     name_matched = _overwrite_nonblank(df, name_sheet, NAME_COLS)

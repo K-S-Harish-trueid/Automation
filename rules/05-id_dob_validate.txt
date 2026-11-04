@@ -119,8 +119,9 @@ CODE      backend/app/pipeline/stage_merge.py :: _fill_sent_blanks,
           backend/app/routes/handoff.py :: _sent_accounts
 Only accounts in the Name Validation / ID Corrections sheets of the frozen
 stage2_haider.xlsx are affected. Rows never sent are kept as they are.
-  1. NAMES -- his value is used. A name cell he left blank, or a row he
-     didn't send back (all 3 names) -> XXX_NOT_COLLECTED_XXX.
+  1. NAMES -- his values are used. Any of the 3 names left blank, or the
+     row not sent back -> ALL 3 (first, middle, last) set to
+     XXX_NOT_COLLECTED_XXX.
   2. IDS -- his values are used, NO format check. ID_TYPE or ID_NUMBER
      blank, or the row not sent back -> BOTH set to XXX_NOT_COLLECTED_XXX.
   3. A row Haider returns that wasn't sent keeps the old rule: blank =
