@@ -3,8 +3,8 @@ import pandas as pd
 from ...rules_config import AGE_OF_MAJORITY, DOB_CUTOFF
 from ..toolbox import _reasons_by_row, _s, compute_id_validity, id_reason_checks, parse_dob_series, series_available
 
-# The default/placeholder DOB is 1 Jan 1900 -- per requirement, any DOB after
-# this exact date is valid (so e.g. 1900-02-01 is fine), only this date
+# The default/placeholder DOB is 1 Jan 1905 -- per requirement, any DOB after
+# this exact date is valid (so e.g. 1905-02-01 is fine), only this date
 # itself or anything earlier is treated as a non-real DOB. Configurable via
 # DOB_CUTOFF_DATE in .env -- see rules_config.py.
 DEFAULT_DOB_CUTOFF = DOB_CUTOFF

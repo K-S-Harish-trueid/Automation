@@ -54,7 +54,7 @@ _RULES_PANELS = {
             "ID_NUMBER matches that type's format -- Passport: 8-9 chars starting with a letter, "
             "National Id: exactly 12 digits, Civil Id: just needs to be present. "
             "An ID_NUMBER made only of zeros fails for every type",
-            "ACCOUNT_HOLDER_DOB is a real date, after 1 January 1900, not in the future, and the "
+            "ACCOUNT_HOLDER_DOB is a real date, after 1 January 1905, not in the future, and the "
             "customer is 18+",
         ],
         "note": None,

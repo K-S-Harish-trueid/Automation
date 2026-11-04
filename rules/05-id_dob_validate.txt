@@ -58,9 +58,9 @@ CHECK 3 -- DATE OF BIRTH (ACCOUNT_HOLDER_DOB)
      then a flexible day-first parse as the last resort for anything else
      (e.g. DD/MM/YYYY-style values).
      -> reason if none succeed: "DOB is not a recognized date."
-  3. Parsed date must be strictly after 1 January 1900 (1900-01-01 itself or
+  3. Parsed date must be strictly after 1 January 1905 (1905-01-01 itself or
      earlier is treated as a placeholder/default date).
-     -> reason: "DOB must be after 1 January 1900."
+     -> reason: "DOB must be after 1 January 1905."
   4. Parsed date must not be in the future.
      -> reason: "DOB is in the future."
   5. (Only checked once the DOB itself passes checks 1-4 above -- a broken
