@@ -22,8 +22,10 @@ RAW_REQUIRED_COLS = list(dict.fromkeys(["ACCOUNT_NUMBER", *REPLACE_MAPPING_COLS,
 # this is purely a display toggle, not a pipeline change. Add/remove ids
 # here to show or hide a stage; empty set shows everything.
 # address_fix is hidden pending a decision on relocating/reworking it --
-# see TODO.
-HIDDEN_STAGE_IDS: set[str] = {"address_fix"}
+# see TODO. default_id is hidden because it has nothing to decide: it only
+# sets missing IDs to the not-collected placeholder; the count shows on the
+# Final Output screen ("IDs not collected") and every change is in the audit.
+HIDDEN_STAGE_IDS: set[str] = {"address_fix", "default_id"}
 
 
 # No stage is type "upload" right now (replace moved to auto, see below) --
@@ -58,7 +60,7 @@ STAGES = [
     {"id": "name_validate", "title": "Name Validation", "type": "manual_edit", "stage": 2},
     {"id": "stage2_dispatch", "title": "Stage 2 Dispatch", "type": "stage2", "stage": 2},
     {"id": "final_id_check", "title": "Final ID Validation", "type": "manual_edit", "stage": 3},
-    {"id": "default_id", "title": "Default ID Assignment", "type": "confirm", "stage": 3},
+    {"id": "default_id", "title": "Mark Missing IDs", "type": "auto", "stage": 3},
     {"id": "done", "title": "Final Output", "type": "done", "stage": 3},
 ]
 
@@ -67,6 +69,7 @@ AUTO_HANDLERS = {
     "replace": stage_replace_from_sql,
     "reset_cms": stage_reset_cms_fields,
     "address_fix": stage_address_fix,
+    "default_id": stage_default_id_assign,
 }
 
 # No stage is type "upload" right now -- kept (empty) as the wiring point for
@@ -74,6 +77,9 @@ AUTO_HANDLERS = {
 # real file-upload gate again.
 UPLOAD_HANDLERS = {}
 
+# default_id is an auto stage now (see STAGES); kept here only so jobs
+# created before that change, whose stored stage list still has it as a
+# confirm gate, can still be confirmed.
 CONFIRM_HANDLERS = {
     "default_id": stage_default_id_assign,
 }
@@ -114,6 +120,6 @@ MANUAL_STAGES = {
         "reasons": validation_reasons_final_id_check,
         "editable_cols": ["ID_TYPE", "ID_NUMBER"],
         "context_cols": ["ACCOUNT_NUMBER", "ACCOUNT_FIRST_NAME", "ACCOUNT_LAST_NAME"],
-        "instructions": "These accounts still have no ID on file after Haider's response. Fill in ID_TYPE/ID_NUMBER manually, or leave blank to have a Civil ID generated automatically.",
+        "instructions": "These accounts still have no ID on file after Haider's response. Fill in ID_TYPE/ID_NUMBER manually. Anything left blank is set to XXX_NOT_COLLECTED_XXX in the next step.",
     },
 }

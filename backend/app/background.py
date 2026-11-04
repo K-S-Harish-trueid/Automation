@@ -67,6 +67,7 @@ def _advance_with_progress(job_id: str):
                 "replace": ("Source-file updated", "Matched value supplied by the cached historical SQL store."),
                 "reset_cms": ("System reset", "CMS fields were cleared before CMS integration."),
                 "address_fix": ("System corrected", "Invalid address auto-filled from the province/Baghdad pool."),
+                "default_id": ("Not collected", "No usable ID after the final ID validation step; set to the not-collected placeholder."),
             }
             label, reason = auto_labels.get(stage["id"], ("System corrected", "Automated pipeline update."))
             # "replace" pulls from the historical SQL cache, not the job's own

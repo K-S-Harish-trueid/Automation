@@ -294,10 +294,20 @@ async def apply_haider_response(
         before_card = after_mobile.copy(deep=True)
         df, card_summary, card_counts = stage_merge.apply_cms_card_response(df, df_card)
         after_card = df.copy(deep=True)
+        # A DATE_OPENED in the future is applied as received, but its audit
+        # entries are labelled as a warning so they're easy to find.
+        future = card_counts.pop("future_mask")
         _append_audit_events(
-            st, before_card, after_card, stage_id=cur["id"],
+            st, before_card[~future], after_card[~future], stage_id=cur["id"],
             fields=pipeline.CMS_UPDATE_COLS,
             label="CMS updated", reason="Card details supplied by CMS Card Details export.",
+            source_file=cms_card_filename, operator="System",
+        )
+        _append_audit_events(
+            st, before_card[future], after_card[future], stage_id=cur["id"],
+            fields=pipeline.CMS_UPDATE_COLS,
+            label={"DATE_OPENED": "CMS warning"},
+            reason={"DATE_OPENED": "DATE_OPENED from CMS is in the future; applied as received."},
             source_file=cms_card_filename, operator="System",
         )
         # Keep _history_metrics(status, "cms_integration") working for _quality_summary
@@ -319,20 +329,25 @@ async def apply_haider_response(
         after_haider = df.copy(deep=True)
         _append_audit_events(
             st, before_haider, after_haider, stage_id=cur["id"],
-            fields=[*stage_merge.NAME_COLS, *stage_merge.ID_COLS, *stage_merge.DOB_COLS],
+            fields=[*stage_merge.NAME_COLS, *stage_merge.ID_COLS],
             label="Haider corrected", reason="Correction supplied by Haider's response.",
             source_file=haider_filename, operator="Haider",
         )
-
-        # --- 3b. Final DOB check: blank/invalid DOB -> NOT_COLLECTED ---
-        before_dob_check = after_haider
-        df, dob_check_summary, dob_check_counts = stage_merge.apply_final_dob_check(df)
-        after_haider = df.copy(deep=True)
+        # DOB: Haider's real corrections vs. DOBs set to the placeholder
+        # because his value was blank/invalid or the row wasn't returned.
+        dob_nc = stage_merge.dob_not_collected_mask(before_haider, after_haider)
         _append_audit_events(
-            st, before_dob_check, after_haider, stage_id=cur["id"],
+            st, before_haider[~dob_nc], after_haider[~dob_nc], stage_id=cur["id"],
+            fields=stage_merge.DOB_COLS,
+            label="Haider corrected", reason="Correction supplied by Haider's response.",
+            source_file=haider_filename, operator="Haider",
+        )
+        _append_audit_events(
+            st, before_haider[dob_nc], after_haider[dob_nc], stage_id=cur["id"],
             fields=stage_merge.DOB_COLS, label="Not collected",
-            reason="DOB blank or invalid after Haider's corrections; set to the not-collected placeholder.",
-            source_file="System", operator="System",
+            reason="Sent to Haider for a DOB correction; his value was blank or invalid, or the row "
+                   "wasn't returned. Set to the not-collected placeholder.",
+            source_file=haider_filename, operator="System",
         )
 
         # --- 4. Add a missing time-of-day to DOB and DATE_OPENED now that Stage 3 is fully merged ---
@@ -360,7 +375,7 @@ async def apply_haider_response(
         cur["status"] = "done"
         st["history"].append({
             "stage_id": cur["id"], "title": cur["title"],
-            "summary": f"{mobile_summary} {card_summary} {haider_summary} {dob_check_summary}",
+            "summary": f"{mobile_summary} {card_summary} {haider_summary}",
             "metrics": {
                 "matched_rows": mobile_counts["mobile_matched"] + card_counts["cms_matched"],
                 "mobile_matched": mobile_counts["mobile_matched"],
@@ -368,16 +383,16 @@ async def apply_haider_response(
                 "name_matched": haider_counts["name_matched"],
                 "id_matched": haider_counts["id_matched"],
                 "dob_matched": haider_counts["dob_matched"],
-                "dob_not_collected": (
-                    haider_counts["dob_haider_invalid"] + haider_counts["dob_not_returned"]
-                    + dob_check_counts["dob_invalid"]
-                ),
+                "dob_not_collected": haider_counts["dob_haider_invalid"] + haider_counts["dob_not_returned"],
+                "cms_future_date_opened": card_counts["future_date_opened"],
             },
             "sub_steps": [
                 {"label": "CMS Mobile Numbers",
                  "detail": f"{mobile_counts['mobile_matched']} account(s) updated"},
                 {"label": "CMS Card Details",
-                 "detail": f"{card_counts['cms_matched']} account(s) updated"},
+                 "detail": f"{card_counts['cms_matched']} account(s) updated" + (
+                     f"; warning: {card_counts['future_date_opened']} DATE_OPENED value(s) in the future"
+                     if card_counts["future_date_opened"] else "")},
                 {"label": "Haider's corrections",
                  "detail": (
                      f"{haider_counts['name_matched']} name, "
@@ -388,10 +403,6 @@ async def apply_haider_response(
                  "detail": (
                      f"{haider_counts['dob_haider_invalid']} blank/invalid in Haider's file, "
                      f"{haider_counts['dob_not_returned']} sent but not returned set to not collected"
-                 )},
-                {"label": "DOB Check",
-                 "detail": (
-                     f"{dob_check_counts['dob_invalid']} blank/invalid set to not collected"
                  )},
                 {"label": "DOB Timestamp Added",
                  "detail": f"{dob_padded_count} account(s) had a missing 00:00:00 time-of-day added"},

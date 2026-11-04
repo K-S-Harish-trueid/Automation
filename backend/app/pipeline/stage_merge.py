@@ -126,7 +126,16 @@ def _normalise_date_opened(resp: pd.DataFrame) -> pd.DataFrame:
         return resp
     resp = resp.copy()
     raw = resp["DATE_OPENED"].astype(str).str.strip()
-    parsed = pd.to_datetime(raw, errors="coerce")
+    # Explicit formats, tried in order and per row -- never let pandas guess
+    # one format from the first row: a single ISO value at the top used to
+    # make every M/D/YYYY row fail here and later be read day-first
+    # (6/4/2025 = 4 June silently became 6 April).
+    parsed = pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns]")
+    for fmt in ("%m/%d/%Y", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"):
+        todo = parsed.isna()
+        if not todo.any():
+            break
+        parsed[todo] = pd.to_datetime(raw[todo], format=fmt, errors="coerce")
     valid = parsed.notna()
     resp.loc[valid, "DATE_OPENED"] = parsed[valid].dt.strftime("%Y-%m-%d")
     return resp
@@ -222,12 +231,20 @@ def validate_cms_card_response(df_card: pd.DataFrame | None):
 
 
 def apply_cms_card_response(df: pd.DataFrame, df_card: pd.DataFrame):
-    """Normalise DATE_OPENED then merge all CMS card columns into df."""
+    """Normalise DATE_OPENED then merge all CMS card columns into df. A
+    DATE_OPENED in the future is applied as received but counted and
+    returned (future_mask) so the caller can warn in the summary/audit."""
+    from .toolbox import parse_dob_series
     validate_cms_card_response(df_card)
     df_card_norm = _normalise_date_opened(df_card)
     cms_matched = _overwrite_nonblank(df, df_card_norm, CMS_CARD_COLS)
+    from_cms = df[KEY].isin(set(df_card_norm[KEY].astype(str).str.strip()))
+    future_mask = from_cms & (parse_dob_series(df["DATE_OPENED"]) > pd.Timestamp.today()).fillna(False)
+    future = int(future_mask.sum())
     summary = f"Applied CMS Card Details: {cms_matched} account(s) updated."
-    return df, summary, {"cms_matched": cms_matched}
+    if future:
+        summary += f" Warning: {future} DATE_OPENED value(s) from CMS are in the future (applied as received)."
+    return df, summary, {"cms_matched": cms_matched, "future_date_opened": future, "future_mask": future_mask}
 
 
 def validate_haider_corrections_response(sheets: dict[str, pd.DataFrame] | None):
@@ -238,10 +255,10 @@ def validate_haider_corrections_response(sheets: dict[str, pd.DataFrame] | None)
 
 def _validate_haider_dob_sheet(df: pd.DataFrame, dob_sheet: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """Check every DOB in Haider's DOB sheet before it's merged: a blank or
-    invalid one (same rules as Stage 1) becomes NOT_COLLECTED, so the merge
-    writes the placeholder instead of skipping the row or applying junk.
-    DATE_OPENED comes from the job (already CMS-updated) for the
-    age-at-opening rule."""
+    invalid one (Stage 1 rules minus the 1905 cutoff) becomes NOT_COLLECTED,
+    so the merge writes the placeholder instead of skipping the row or
+    applying junk. DATE_OPENED comes from the job (already CMS-updated) for
+    the opening-date rule."""
     from .stages.id_dob_validate import mask_dob_invalid
     from .toolbox import NOT_COLLECTED
     sheet = dob_sheet.copy()
@@ -252,7 +269,7 @@ def _validate_haider_dob_sheet(df: pd.DataFrame, dob_sheet: pd.DataFrame) -> tup
         "DATE_OPENED": sheet[KEY].map(opened).fillna(""),
     }, index=sheet.index)
     already = sheet["ACCOUNT_HOLDER_DOB"].astype(str).str.strip().eq(NOT_COLLECTED)
-    invalid = mask_dob_invalid(check) & sheet[KEY].ne("")
+    invalid = mask_dob_invalid(check, check_cutoff=False) & sheet[KEY].ne("")
     sheet.loc[invalid, "ACCOUNT_HOLDER_DOB"] = NOT_COLLECTED
     return sheet, int((invalid & ~already).sum())
 
@@ -264,7 +281,8 @@ def apply_haider_corrections_response(
     Haider's corrected workbook into df. DOBs in his sheet are validated
     first (_validate_haider_dob_sheet); any account in `sent_dob_accounts`
     (the DOB Corrections sheet sent to him) that he didn't send back is set
-    to NOT_COLLECTED."""
+    to NOT_COLLECTED, whatever the reason it was sent. Rows never sent are
+    not checked here at all -- they already passed Stages 1-2."""
     from .toolbox import NOT_COLLECTED
     validate_haider_corrections_response(sheets)
     name_matched = _overwrite_nonblank(df, sheets[SHEET_NAME_VALIDATE], NAME_COLS)
@@ -288,16 +306,12 @@ def apply_haider_corrections_response(
     return df, summary, counts
 
 
-def apply_final_dob_check(df: pd.DataFrame):
-    """Runs after Haider's corrections are merged: any DOB that is still
-    blank or invalid (same rules as Stage 1's DOB check) is set to
-    NOT_COLLECTED. Rows already NOT_COLLECTED are left alone and not
-    counted."""
-    from .stages.id_dob_validate import mask_dob_invalid
+def dob_not_collected_mask(before: pd.DataFrame, after: pd.DataFrame) -> pd.Series:
+    """Rows whose DOB was turned into NOT_COLLECTED between before/after --
+    used to label those audit events "Not collected" instead of "Haider
+    corrected"."""
     from .toolbox import NOT_COLLECTED
-    already = df["ACCOUNT_HOLDER_DOB"].astype(str).str.strip().eq(NOT_COLLECTED)
-    invalid = mask_dob_invalid(df) & ~already
-    df.loc[invalid, "ACCOUNT_HOLDER_DOB"] = NOT_COLLECTED
-    counts = {"dob_invalid": int(invalid.sum())}
-    summary = f"DOB check: {counts['dob_invalid']} blank/invalid set to {NOT_COLLECTED}."
-    return df, summary, counts
+    new = after["ACCOUNT_HOLDER_DOB"].astype(str).str.strip()
+    old = before["ACCOUNT_HOLDER_DOB"].astype(str).str.strip()
+    return new.eq(NOT_COLLECTED) & old.ne(NOT_COLLECTED)
+

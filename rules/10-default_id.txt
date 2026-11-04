@@ -1,6 +1,8 @@
-STEP 10 -- default_id ("Default ID Assignment")
+STEP 10 -- default_id ("Mark Missing IDs")
 ================================================================================
-TYPE      confirm (requires explicit operator confirmation, no editing)
+TYPE      auto, hidden from the sidebar (runs right after final_id_check,
+          no operator action). The count shows on the Final Output screen as
+          "IDs not collected"; every change is in the audit download.
 CODE      backend/app/pipeline/stages/default_id.py :: stage_default_id_assign,
           default_id_invalid_mask
 
@@ -15,13 +17,10 @@ step 9: ID_TYPE or ID_NUMBER blank, ID_TYPE "doc", or an ID_NUMBER made only
 of zeros (e.g. "000000000000"). Anything else Haider filled in is kept as is.
 
 CONSTRAINTS
-  1. PREVIEW FIRST -- before running, GET /jobs/{id}/current for this
-     stage returns affected_count, so the operator sees the impact before
-     confirming.
-  2. ASSIGNMENT -- set both ID_TYPE and ID_NUMBER to the not-collected
+  1. ASSIGNMENT -- set both ID_TYPE and ID_NUMBER to the not-collected
      placeholder (NOT_COLLECTED_PLACEHOLDER, default XXX_NOT_COLLECTED_XXX)
      for every affected row. No other fields are touched.
-  3. NOT A GENERATED VALUE -- these rows are not written to the
+  2. NOT A GENERATED VALUE -- these rows are not written to the
      generated_records table / K2_Generated_Records.xlsx, since nothing is
      generated.
 
@@ -29,6 +28,8 @@ EDITABLE FIELDS
 None -- this step assigns, it doesn't accept operator edits.
 
 ADVANCE RULE
-Only runs after an explicit POST /jobs/{id}/confirm call; there is no
-skip -- every row still missing an ID at this point WILL be set to the
-not-collected placeholder before the job can reach "done".
+Runs automatically and always advances; there is no skip -- every row
+still missing an ID at this point WILL be set to the not-collected
+placeholder before the job reaches "done". (Jobs created before this step
+became automatic still show it as a confirm screen; POST /jobs/{id}/confirm
+still works for those.)

@@ -94,18 +94,26 @@ repeated at the Stage 3 Haider merge -- see "DOB AT STAGE 3" below.
 
 DOB AT STAGE 3 (Haider's corrected file)
 CODE      backend/app/pipeline/stage_merge.py :: _validate_haider_dob_sheet,
-          apply_haider_corrections_response, apply_final_dob_check
+          apply_haider_corrections_response, apply_cms_card_response
           backend/app/routes/handoff.py :: _sent_dob_accounts
-Same DOB rules as CHECK 3 above. Runs in this order:
-  1. BEFORE MERGE -- every DOB in Haider's DOB Corrections sheet is
-     checked. Blank or invalid -> XXX_NOT_COLLECTED_XXX in his data.
-     (DATE_OPENED for the age-at-opening rule comes from the job, after the
-     CMS card merge.)
-  2. MERGE -- his values (including XXX_NOT_COLLECTED_XXX) overwrite the
-     job rows, matched by ACCOUNT_NUMBER.
-  3. NOT RETURNED -- any account that was in the DOB Corrections sheet sent
-     to Haider (frozen stage2_haider.xlsx) but is missing from his response
-     -> XXX_NOT_COLLECTED_XXX.
-  4. FINAL CHECK -- every row in the job: DOB still blank/invalid ->
-     XXX_NOT_COLLECTED_XXX.
-Accounts never sent to Haider (valid DOB) are kept as they are.
+Only Haider's DOB sheet is checked at Stage 3 -- rows that were never sent
+to him already passed Stages 1-2 and are kept exactly as they are.
+  1. NOT SENT -- kept as is, no check.
+  2. SENT, HAIDER GAVE A VALUE -- his value is checked with the DOB rules
+     above EXCEPT the 1905 cutoff (rule 3): a pre-1905 DOB from Haider is
+     accepted. Valid -> merged. Blank or invalid (not a real date, in the
+     future, under 18 today, opening date in the future) ->
+     XXX_NOT_COLLECTED_XXX. (mask_dob_invalid(df, check_cutoff=False).)
+  3. SENT, NOT RETURNED -- any account in the DOB Corrections sheet sent to
+     Haider (frozen stage2_haider.xlsx) but missing from his response ->
+     XXX_NOT_COLLECTED_XXX, whatever the reason it was sent (pre-1905
+     included).
+  4. A row Haider returns that wasn't sent is checked the same way as 2.
+Audit: Haider's real DOB corrections are labelled "Haider corrected"; DOBs
+set to the placeholder in 2/3 are labelled "Not collected".
+Stages 1-2 still flag a pre-1905 DOB, so it is still sent to Naresh/Haider.
+
+CMS DATE_OPENED IN THE FUTURE (Stage 3, CMS Card Details)
+A DATE_OPENED from the CMS card file that is in the future is applied as
+received (not blocked). It is counted in the Stage 3 summary as a warning
+and its audit entry is labelled "CMS warning".

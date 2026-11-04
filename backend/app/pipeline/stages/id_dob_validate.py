@@ -53,13 +53,16 @@ def _age_years_at_opening(df: pd.DataFrame, parsed_dob: pd.Series) -> pd.Series:
     return _age_years(reference_date, parsed_dob)
 
 
-def compute_dob_validity(df: pd.DataFrame) -> pd.Series:
+def compute_dob_validity(df: pd.DataFrame, check_cutoff: bool = True) -> pd.Series:
+    """check_cutoff=False skips the "after DOB_CUTOFF" rule -- the Stage 3
+    checks use that, so a pre-1905 DOB is still sent to Naresh/Haider in
+    Stages 1-2 but is never set to NOT_COLLECTED at Stage 3."""
     dob_s = _s(df, "ACCOUNT_HOLDER_DOB")
     avail = series_available(df.get("ACCOUNT_HOLDER_DOB", pd.Series([""] * len(df), index=df.index)))
     parsed = parse_dob_series(dob_s)
     today = pd.Timestamp.today()
     valid_format = parsed.notna()
-    after_cutoff = parsed > DEFAULT_DOB_CUTOFF
+    after_cutoff = parsed > DEFAULT_DOB_CUTOFF if check_cutoff else True
     not_future_dob = parsed <= today
     opened_parsed = _opened_parsed(df)
     not_future_opened = opened_parsed.isna() | (opened_parsed <= today)
@@ -81,10 +84,11 @@ def mask_id_dob_invalid(df: pd.DataFrame) -> pd.Series:
     return ~(type_valid & num_valid & dob_valid)
 
 
-def mask_dob_invalid(df: pd.DataFrame) -> pd.Series:
+def mask_dob_invalid(df: pd.DataFrame, check_cutoff: bool = True) -> pd.Series:
     """DOB-only half of mask_id_dob_invalid -- used by the Stage 1 Naresh
-    handoff, which reviews DOB separately from ID."""
-    return ~compute_dob_validity(df)
+    handoff, which reviews DOB separately from ID, and (with
+    check_cutoff=False) by the Stage 3 DOB checks in stage_merge.py."""
+    return ~compute_dob_validity(df, check_cutoff)
 
 
 def _dob_reason_checks(df: pd.DataFrame, dob: pd.Series, parsed: pd.Series) -> list[tuple[pd.Series, str]]:
