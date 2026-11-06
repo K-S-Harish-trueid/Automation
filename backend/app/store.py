@@ -136,7 +136,10 @@ def preview_raw_upload(raw: bytes, filename: str) -> dict:
     if "ACCOUNT_NUMBER" in df.columns:
         account_numbers = df["ACCOUNT_NUMBER"].astype(str).str.strip()
         duplicates = int(account_numbers.duplicated(keep=False).sum())
+    from .upload_check import check_upload
+
     return {
+        "upload_check": check_upload({"": df}),
         "filename": filename,
         "file_size": len(raw),
         "row_count": int(len(df)),
@@ -148,14 +151,21 @@ def preview_raw_upload(raw: bytes, filename: str) -> dict:
     }
 
 
-def create_job(raw: bytes, filename: str) -> str:
+def create_job(raw: bytes, filename: str, warnings_out: list | None = None) -> str:
+    """warnings_out, if given, receives the upload check's warnings
+    (e.g. account numbers that lost their leading zeros)."""
     job_id = _next_job_id()
     df = read_table(raw, filename)
     from .pipeline import RAW_REQUIRED_COLS, STAGES
+    from .upload_check import enforce
 
     missing = [c for c in RAW_REQUIRED_COLS if c not in df.columns]
     if missing:
         raise ValueError(f"Uploaded file missing required columns: {missing}")
+    # Excel-damaged file -> UploadBlocked (a ValueError) before any job folder exists
+    warnings = enforce({"": df}, filename)
+    if warnings_out is not None:
+        warnings_out.extend(warnings)
     df = df.reset_index(drop=True)
 
     status = {

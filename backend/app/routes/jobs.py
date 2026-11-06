@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 
 from .. import generated_records_db, store
 from ..background import _run_in_background
+from ..upload_check import UploadBlocked
 from ..helpers import (
     _current_stage,
     _phase_progress,
@@ -21,8 +22,11 @@ router = APIRouter()
 @router.post("/api/jobs")
 async def create_job(file: UploadFile = File(...)):
     raw = await file.read()
+    warnings: list = []
     try:
-        job_id = store.create_job(raw, file.filename)
+        job_id = store.create_job(raw, file.filename, warnings_out=warnings)
+    except UploadBlocked as e:
+        raise HTTPException(400, {"message": str(e), "upload_check": e.result})
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -34,7 +38,7 @@ async def create_job(file: UploadFile = File(...)):
         total_steps=total, current_step_name="Starting…", percent=percent,
     )
     _run_in_background(job_id, resolve_gate=lambda: None)
-    return {"job_id": job_id, "status": "processing"}
+    return {"job_id": job_id, "status": "processing", "upload_warnings": warnings}
 
 
 @router.post("/api/uploads/raw-preview")

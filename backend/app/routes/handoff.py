@@ -28,7 +28,7 @@ import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from .. import pipeline, store
+from .. import pipeline, store, upload_check
 from ..background import _run_in_background
 from ..helpers import (
     _append_audit_events,
@@ -160,6 +160,9 @@ async def apply_naresh_response(job_id: str, file: UploadFile = File(...)):
     try:
         sheets = _read_workbook_sheets(raw, filename)
         stage_merge.validate_naresh_response(sheets)
+        upload_warnings = upload_check.enforce(sheets, filename)
+    except upload_check.UploadBlocked as e:
+        raise HTTPException(400, {"message": str(e), "upload_check": e.result})
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -206,7 +209,7 @@ async def apply_naresh_response(job_id: str, file: UploadFile = File(...)):
         store.set_df(job_id, df)
 
     _run_in_background(job_id, resolve_gate)
-    return {"job_id": job_id, "status": "processing"}
+    return {"job_id": job_id, "status": "processing", "upload_warnings": upload_warnings}
 
 
 @router.get("/api/jobs/{job_id}/stage2/haider.xlsx")
@@ -266,6 +269,14 @@ async def apply_haider_response(
         stage_merge.validate_cms_card_response(df_card)
         haider_sheets = _read_workbook_sheets(haider_raw, haider_filename)
         stage_merge.validate_haider_corrections_response(haider_sheets)
+        # all three files are checked before anything is merged
+        upload_warnings = (
+            upload_check.enforce({"": df_mobile}, cms_mobile_filename)
+            + upload_check.enforce({"": df_card}, cms_card_filename)
+            + upload_check.enforce(haider_sheets, haider_filename)
+        )
+    except upload_check.UploadBlocked as e:
+        raise HTTPException(400, {"message": str(e), "upload_check": e.result})
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -434,4 +445,4 @@ async def apply_haider_response(
         store.set_df(job_id, df)
 
     _run_in_background(job_id, resolve_gate)
-    return {"job_id": job_id, "status": "processing"}
+    return {"job_id": job_id, "status": "processing", "upload_warnings": upload_warnings}

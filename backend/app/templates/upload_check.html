@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>K2 Upload Check</title>
+<link rel="stylesheet" href="style.css" />
+<script src="config.js"></script>
+<style>
+  /* Standalone dev page on the shared stylesheet's tokens, same as delete.html. */
+  body { background: var(--canvas); color: var(--text); font-family: var(--font-body); margin: 0; }
+  .page { max-width: 1100px; margin: 0 auto; padding: 28px 24px 64px; }
+  a.back { font-size: 13px; text-decoration: none; color: var(--muted); }
+  a.back:hover { color: var(--accent); }
+  h1 { font-family: var(--font-display); font-size: 22px; font-weight: 600; margin: 10px 0 4px; }
+  .lead { margin: 0 0 20px; color: var(--muted); font-size: 13px; max-width: 720px; line-height: 1.5; }
+
+  .drop {
+    border: 1.5px dashed var(--border-soft); border-radius: var(--radius-lg); background: var(--surface);
+    padding: 34px 20px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .drop span { font-size: 12px; color: var(--muted); }
+  .drop input { display: none; }
+
+  .rules { margin: 14px 0 0; font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .rules code { font-family: var(--font-mono); font-size: 11.5px; }
+
+  .verdict {
+    display: none; margin-top: 22px; border-radius: var(--radius-lg); padding: 16px 18px;
+    border: 1px solid var(--border-soft); background: var(--surface);
+  }
+  .verdict.show { display: block; }
+  .verdict .head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .verdict .pill { font-size: 12px; font-weight: 700; letter-spacing: .05em; padding: 4px 10px; border-radius: 999px; }
+  .verdict.clean .pill { background: var(--good-soft); color: var(--good); }
+  .verdict.warnings .pill { background: var(--warn-soft); color: var(--warn); }
+  .verdict.blocked .pill { background: var(--danger-soft); color: var(--danger); }
+  .verdict .file { font-weight: 600; }
+  .verdict .meta { font-size: 12px; color: var(--muted); }
+  .verdict .msg { margin: 10px 0 0; font-size: 13px; line-height: 1.55; }
+
+  .issues { margin-top: 16px; display: none; }
+  .issues.show { display: block; }
+  .issues-wrap { overflow-x: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; background: var(--surface); }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  .sev { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .sev.block { background: var(--danger-soft); color: var(--danger); }
+  .sev.warn { background: var(--warn-soft); color: var(--warn); }
+  .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ex { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+  .ex b { color: var(--text); font-weight: 500; }
+  .err { color: var(--danger); margin-top: 16px; font-size: 13px; display: none; }
+  .err.show { display: block; }
+  .busy { margin-top: 16px; font-size: 13px; color: var(--muted); display: none; }
+  .busy.show { display: block; }
+
+  @media (max-width: 640px) { .page { padding: 20px 16px 48px; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <a class="back" href="./">&larr; Back to the app</a>
+  <h1>Upload check</h1>
+  <p class="lead">Dev page for testing the upload check before it goes into the real uploads.
+    Drop any file the pipeline takes (raw K2 file, Naresh, Haider, CMS mobile or CMS card). Nothing is saved
+    and no job is created.</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept=".csv,.xlsx,.xls,.parquet" />
+    <b>Drop a file here or click to choose</b>
+    <span>.csv, .xlsx, .xls or .parquet; every sheet of an .xlsx is checked</span>
+  </label>
+
+  <div class="rules">
+    <b>Blocks the upload:</b><br>
+    1. Scientific notation in any column (<code>2.0008E+11</code>)<br>
+    2. Number saved as a decimal in ACCOUNT_NUMBER / ID_NUMBER / PHONE_NUMBER / SMART_IDENTIFIER / CARD_NUMBER (<code>356360.0</code>)<br>
+    3. ACCOUNT_NUMBER not digits only<br>
+    <b>Warns:</b><br>
+    4. ACCOUNT_NUMBER not the usual length (10 or 12 digits): leading zeros may have been lost (<code>356360</code>)
+  </div>
+
+  <div class="busy" id="busy">Checking&hellip;</div>
+  <div class="err" id="err"></div>
+
+  <div class="verdict" id="verdict">
+    <div class="head">
+      <span class="pill" id="pill"></span>
+      <span class="file" id="fname"></span>
+      <span class="meta" id="meta"></span>
+    </div>
+    <p class="msg" id="msg"></p>
+  </div>
+
+  <div class="issues" id="issues">
+    <div class="issues-wrap">
+      <table>
+        <thead><tr><th>Result</th><th>Sheet</th><th>Column</th><th>Problem</th><th>Rows</th><th>Examples (Excel row: value)</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (n) => Number(n).toLocaleString();
+
+const MESSAGES = {
+  clean: "No problems found. This file would be accepted.",
+  warnings: "This file would be accepted, but check the warnings below.",
+  blocked: "This file would be refused. It looks like it was opened and saved in Excel (or changed some other way), "
+    + "and some values below are already damaged. Upload the original export instead.",
+};
+
+async function check(file) {
+  $("err").classList.remove("show");
+  $("verdict").className = "verdict";
+  $("issues").classList.remove("show");
+  $("busy").classList.add("show");
+  const body = new FormData();
+  body.append("file", file);
+  try {
+    const r = await fetch("api/dev/upload-check", { method: "POST", body });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    render(data);
+  } catch (e) {
+    $("err").textContent = "Could not check the file: " + e.message;
+    $("err").classList.add("show");
+  } finally {
+    $("busy").classList.remove("show");
+  }
+}
+
+function render(d) {
+  const sheets = Object.entries(d.rows);
+  $("verdict").className = "verdict show " + d.verdict;
+  $("pill").textContent = d.verdict.toUpperCase();
+  $("fname").textContent = d.filename;
+  $("meta").textContent = sheets.map(([s, n]) => (s ? s + ": " : "") + fmt(n) + " rows").join(" · ");
+  $("msg").textContent = MESSAGES[d.verdict];
+  if (!d.issues.length) return;
+  $("rows").innerHTML = d.issues.map((i) => `
+    <tr>
+      <td><span class="sev ${i.severity}">${i.severity === "block" ? "BLOCK" : "WARN"}</span></td>
+      <td>${esc(i.sheet || "-")}</td>
+      <td><b>${esc(i.column)}</b></td>
+      <td>${esc(i.problem)}</td>
+      <td class="num">${fmt(i.count)} / ${fmt(i.total)}</td>
+      <td class="ex">${i.examples.map((e) => `row ${e.row}: <b>${esc(e.value)}</b>`).join("<br>")}</td>
+    </tr>`).join("");
+  $("issues").classList.add("show");
+}
+
+const drop = $("drop");
+$("file").addEventListener("change", (e) => e.target.files[0] && check(e.target.files[0]));
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => e.dataTransfer.files[0] && check(e.dataTransfer.files[0]));
+</script>
+</body>
+</html>

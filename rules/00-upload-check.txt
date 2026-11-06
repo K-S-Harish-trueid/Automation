@@ -1,0 +1,35 @@
+UPLOAD CHECK -- runs on every uploaded file, before any stage uses it
+================================================================================
+CODE      backend/app/upload_check.py :: enforce, check_upload, check_frame,
+          _lost_zero_accounts
+WHERE     raw K2 file (Start batch + its preview), Naresh's reply (Stage 2
+          page), CMS mobile, CMS card and Haider's file (Stage 3 page)
+DEV PAGE  /upload-check (hidden like /test): try any file, nothing is saved
+
+WHY
+A K2 export that was opened and saved in Excel loses data silently: long
+numbers become 2.0008E+11, leading zeros are dropped, dates are rewritten.
+Jobs 20261104_003/004 ran on such a file.
+
+RULES (every column of every sheet)
+  1. BLOCK  scientific notation in any column, e.g. 2.0008E+11, 9.64751E+12.
+            Only Excel's exact shape counts (one digit, optional decimals,
+            "E+", 1-2 digit exponent); real data like 1186e51219 passes.
+  2. BLOCK  a number saved as a decimal (356360.0) in ACCOUNT_NUMBER,
+            ID_NUMBER, PHONE_NUMBER, SMART_IDENTIFIER or CARD_NUMBER.
+  3. BLOCK  ACCOUNT_NUMBER that is not digits only.
+  4. WARN   ACCOUNT_NUMBER that lost its leading zeros: not in the
+            historical store as typed, but there with zeros in front
+            (356360 -> 0000356360). No fixed account length is assumed.
+            Skipped (never blocks) if the historical store is unreachable.
+Blank, 0, nan/none/null and XXX_NOT_COLLECTED_XXX are not checked.
+
+WHAT THE OPERATOR SEES
+- BLOCK: the upload is refused (HTTP 400, no job created / nothing merged)
+  and a red notice lists each damaged column with counts and example rows.
+- WARN: the upload goes ahead; an amber notice lists the accounts and what
+  they were. Notices stay on screen until closed.
+- The raw-file preview shows the same notice as soon as a file is picked.
+
+NOT CHECKED (yet)
+Date formats (Excel's 23-04-2024 06:04) and duplicate account numbers.

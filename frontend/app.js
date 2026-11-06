@@ -226,6 +226,64 @@ const RING_CIRCUMFERENCE = 314.159;
 
 // ---------- small UI helpers ----------
 
+// Upload check notice: stays until closed, unlike toast(). `kind` is
+// "warning" (file used, look at these) or "blocked" (file refused).
+function showUploadNotice(kind, title, issues, filename) {
+  let host = document.getElementById("uploadNotices");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "uploadNotices";
+    document.body.appendChild(host);
+  }
+  const fmt = (n) => Number(n).toLocaleString();
+  const rows = (issues || []).map((i) => {
+    const file = i.filename || filename || "";
+    const sheet = i.sheet ? ` · ${escapeHtml(i.sheet)}` : "";
+    const ex = (i.examples || []).slice(0, 3)
+      .map((e) => `row ${e.row}: <code>${escapeHtml(e.value)}</code>`).join("<br>");
+    return `<li>
+      <div class="notice-line"><span class="notice-sev notice-sev-${i.severity}">${i.severity === "block" ? "blocked" : "warning"}</span>
+        <b>${escapeHtml(i.column)}</b> — ${escapeHtml(i.problem)}</div>
+      <div class="notice-meta">${fmt(i.count)} of ${fmt(i.total)} rows${file ? ` · ${escapeHtml(file)}` : ""}${sheet}</div>
+      ${ex ? `<div class="notice-ex">${ex}</div>` : ""}
+    </li>`;
+  }).join("");
+  // the same notice again (e.g. the file picked twice) replaces the old one
+  host.querySelectorAll(".upload-notice").forEach((n) => { if (n.dataset.title === title) n.remove(); });
+  const el = document.createElement("div");
+  el.dataset.title = title;
+  el.className = `upload-notice upload-notice-${kind}`;
+  el.setAttribute("role", kind === "blocked" ? "alert" : "status");
+  el.innerHTML = `
+    <div class="notice-head">
+      <span class="notice-title">${escapeHtml(title)}</span>
+      <button type="button" class="notice-close" aria-label="Close">×</button>
+    </div>
+    <ul class="notice-list">${rows}</ul>`;
+  el.querySelector(".notice-close").onclick = () => el.remove();
+  host.prepend(el);
+  return el;
+}
+
+// After a successful upload: show the check's warnings, if any.
+function noticeUploadWarnings(response) {
+  const warnings = (response && response.upload_warnings) || [];
+  if (warnings.length) {
+    showUploadNotice("warning", "Uploaded, but please check", warnings);
+  }
+}
+
+// After a failed upload: show the blocked file's problems if the check refused it.
+function noticeUploadError(e) {
+  if (e && e.uploadCheck) {
+    const blocks = (e.uploadCheck.issues || []).filter((i) => i.severity === "block");
+    showUploadNotice("blocked", `${e.uploadCheck.filename || "File"} was not used — it looks damaged`,
+      blocks, e.uploadCheck.filename);
+    return true;
+  }
+  return false;
+}
+
 function toast(msg, type = "info") {
   toastEl.textContent = msg;
   toastEl.className = `toast-visible toast-${type}`;
@@ -371,6 +429,12 @@ async function api(path, opts = {}) {
     const detail = body.detail || res.statusText || "The request could not be completed.";
     if (res.status === 404 && String(detail).toLowerCase().includes("job")) {
       throw new Error("This job has already been deleted or is no longer available.");
+    }
+    // a blocked upload carries the full upload check result for the notice panel
+    if (detail && typeof detail === "object") {
+      const err = new Error(detail.message || "The request could not be completed.");
+      err.uploadCheck = detail.upload_check || null;
+      throw err;
     }
     throw new Error(detail);
   }
@@ -952,6 +1016,7 @@ function renderNewBatch() {
     setBusy("Uploading file…");
     try {
       const status = await api("/jobs", { method: "POST", body: fd });
+      noticeUploadWarnings(status);
       jobId = status.job_id;
       knownHistoryCount = 0;
       localStorage.setItem("k2_job_id", jobId);
@@ -962,7 +1027,7 @@ function renderNewBatch() {
       await refresh(true);
     } catch (e) {
       clearBusy();
-      toast(e.message, "error");
+      if (!noticeUploadError(e)) toast(e.message, "error");
     } finally {
       isBusy = false;
       lockAllControls(false);
@@ -1063,7 +1128,8 @@ async function renderStageUploadStep(config) {
     lockAllControls(true);
     renderStageProcessingStep(config);
     try {
-      await api(`/jobs/${selectedJobId}${config.path}`, { method: "POST", body: fd });
+      const uploadResult = await api(`/jobs/${selectedJobId}${config.path}`, { method: "POST", body: fd });
+      noticeUploadWarnings(uploadResult);
       await pollJobProgress(selectedJobId);
       // Adopt this job as the active one (same as clicking it on the
       // dashboard) and let the normal wizard render whatever comes next --
@@ -1078,7 +1144,7 @@ async function renderStageUploadStep(config) {
     } catch (e) {
       isBusy = false;
       lockAllControls(false);
-      toast(e.message, "error");
+      if (!noticeUploadError(e)) toast(e.message, "error");
       renderStageUploadStep(config);
     }
   };
@@ -1341,10 +1407,22 @@ async function previewRawUpload(file) {
     const preview = await api("/uploads/raw-preview", { method: "POST", body: form });
     if (!document.getElementById("rawUploadPreview") || selectedName !== file.name) return;
     const missing = preview.missing_required_columns || [];
-    previewEl.className = `upload-preview ${missing.length ? "preview-invalid" : "preview-valid"}`;
-    previewEl.innerHTML = missing.length
-      ? `Missing required columns: ${escapeHtml(missing.join(", "))}`
-      : `${preview.row_count.toLocaleString()} rows detected — all required columns found.`;
+    const check = preview.upload_check || { verdict: "clean", issues: [] };
+    const blocks = check.issues.filter((i) => i.severity === "block");
+    const warns = check.issues.filter((i) => i.severity !== "block");
+    const bad = missing.length || blocks.length;
+    previewEl.className = `upload-preview ${bad ? "preview-invalid" : warns.length ? "preview-warning" : "preview-valid"}`;
+    if (missing.length) {
+      previewEl.innerHTML = `Missing required columns: ${escapeHtml(missing.join(", "))}`;
+    } else if (blocks.length) {
+      previewEl.innerHTML = `This file looks damaged (opened and saved in Excel?) and will be refused — upload the original export.`;
+      showUploadNotice("blocked", `${file.name} will be refused — it looks damaged`, blocks, file.name);
+    } else if (warns.length) {
+      previewEl.innerHTML = `${preview.row_count.toLocaleString()} rows detected — all required columns found, with ${warns.length} warning${warns.length > 1 ? "s" : ""}.`;
+      showUploadNotice("warning", `${file.name}: please check before starting`, warns, file.name);
+    } else {
+      previewEl.innerHTML = `${preview.row_count.toLocaleString()} rows detected — all required columns found.`;
+    }
   } catch (e) {
     if (!document.getElementById("rawUploadPreview")) return;
     previewEl.className = "upload-preview preview-invalid";
